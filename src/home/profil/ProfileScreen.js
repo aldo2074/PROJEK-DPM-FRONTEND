@@ -32,8 +32,6 @@ const MenuItem = ({ icon, text, onPress }) => (
 const ProfileScreen = () => {
   const navigation = useNavigation();
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [darkModeEnabled, setDarkModeEnabled] = useState(false);
-  const [language, setLanguage] = useState('id');
   const [profileData, setProfileData] = useState({
     username: '',
     email: '',
@@ -44,17 +42,32 @@ const ProfileScreen = () => {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
+  const [notifications, setNotifications] = useState(true);
+  const [isVerified, setIsVerified] = useState(false);
 
   useEffect(() => {
     const checkToken = async () => {
-      const token = await AsyncStorage.getItem('authToken');
-      if (!token) {
-        navigation.replace('Login');
+      try {
+        const token = await AsyncStorage.getItem('authToken');
+        console.log('Current token in ProfileScreen:', token);
+        
+        if (!token) {
+          console.log('No token found, redirecting to Login');
+          navigation.replace('Login');
+          return;
+        }
+        
+        // Set axios default header
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        
+        // Fetch profile setelah memastikan token ada
+        await fetchProfile();
+      } catch (error) {
+        console.error('Error in checkToken:', error);
       }
     };
     
     checkToken();
-    fetchProfile();
   }, []);
 
   const fetchProfile = async () => {
@@ -68,25 +81,9 @@ const ProfileScreen = () => {
         return;
       }
 
-      // Decode token untuk cek expiry
-      const tokenParts = token.split('.');
-      if (tokenParts.length === 3) {
-        const payload = JSON.parse(atob(tokenParts[1]));
-        const currentTime = Math.floor(Date.now() / 1000);
-        
-        if (payload.exp && payload.exp < currentTime) {
-          console.log('Token expired');
-          await AsyncStorage.removeItem('authToken');
-          navigation.replace('Login');
-          return;
-        }
-      }
-
       const response = await axios.get(PROFILE_URL, {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${token}`
         }
       });
 
@@ -94,7 +91,6 @@ const ProfileScreen = () => {
 
       if (response.data.success) {
         setProfile(response.data.user);
-        setError(null);
         setProfileData({
           username: response.data.user.username || '',
           email: response.data.user.email || '',
@@ -102,32 +98,23 @@ const ProfileScreen = () => {
           oldPassword: '',
           newPassword: '',
         });
-      } else {
-        setError('Gagal memuat profil');
       }
     } catch (error) {
-      console.error('Error fetching profile:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        headers: error.config?.headers
-      });
+      console.error('Error fetching profile:', error);
+      handleError(error);
+    }
+  };
 
-      if (error.response?.status === 401) {
-        await AsyncStorage.removeItem('authToken');
-        Alert.alert(
-          'Sesi Berakhir',
-          'Silakan login kembali',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.replace('Login')
-            }
-          ]
-        );
-      } else {
-        setError('Gagal memuat profil');
-      }
+  const handleError = async (error) => {
+    if (error.response?.status === 401) {
+      await AsyncStorage.removeItem('authToken');
+      Alert.alert(
+        'Sesi Berakhir',
+        'Silakan login kembali',
+        [{ text: 'OK', onPress: () => navigation.replace('Login') }]
+      );
+    } else {
+      Alert.alert('Error', 'Gagal memuat profil');
     }
   };
 
@@ -225,6 +212,22 @@ const ProfileScreen = () => {
     }
   };
 
+  const handleVerifyAccount = async () => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      const response = await axios.post(`${PROFILE_URL}/verify`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.data.success) {
+        setIsVerified(true);
+        Alert.alert('Sukses', 'Email verifikasi telah dikirim ke email Anda');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Gagal mengirim email verifikasi');
+    }
+  };
+
   const renderEditProfileModal = () => (
     <Modal
       animationType="slide"
@@ -247,7 +250,7 @@ const ProfileScreen = () => {
                 <Image 
                   source={
                     profileData.profileImage
-                      ? { uri: profileData.profileImage.uri }
+                      ? { uri: `${PROFILE_URL}/${profileData.profileImage}` }
                       : require('../../../assets/icons/default-profile.png')
                   }
                   style={styles.editProfileImage}
@@ -346,16 +349,42 @@ const ProfileScreen = () => {
           <Image 
             source={
               profileData.profileImage
-                ? { uri: `${PROFILE_URL}/uploads/${profileData.profileImage}` }
+                ? { uri: `${PROFILE_URL}/${profileData.profileImage}` }
                 : require('../../../assets/icons/default-profile.png')
             }
             style={styles.profileImage}
           />
           <Text style={styles.profileName}>{profileData.username || 'Pengguna'}</Text>
           <Text style={styles.profileEmail}>{profileData.email || 'Email tidak tersedia'}</Text>
+          {!isVerified && (
+            <TouchableOpacity 
+              style={styles.verifyButton}
+              onPress={handleVerifyAccount}
+            >
+              <Icon name="verified-user" size={20} color="#0391C4" />
+              <Text style={styles.verifyText}>Verifikasi Akun</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.quickActions}>
+        <View style={styles.settingsSection}>
+          <Text style={styles.sectionTitle}>Pengaturan</Text>
+          
+          {/* Notifikasi Toggle */}
+          <View style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <Icon name="notifications" size={24} color="#0391C4" />
+              <Text style={styles.settingText}>Notifikasi</Text>
+            </View>
+            <Switch
+              value={notifications}
+              onValueChange={setNotifications}
+              trackColor={{ false: '#767577', true: '#0391C4' }}
+              thumbColor={notifications ? '#fff' : '#f4f3f4'}
+            />
+          </View>
+
+          {/* Menu Items */}
           <MenuItem
             icon="person"
             text="Edit Profil"
@@ -366,53 +395,25 @@ const ProfileScreen = () => {
             text="Riwayat"
             onPress={() => navigation.navigate('Riwayat')}
           />
-        </View>
-
-        <View style={styles.settingsSection}>
-          <Text style={styles.sectionTitle}>Pengaturan</Text>
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon name="dark-mode" size={24} color="#0391C4" />
-              <Text style={styles.settingText}>Mode Gelap</Text>
-            </View>
-            <Switch
-              value={darkModeEnabled}
-              onValueChange={setDarkModeEnabled}
-              trackColor={{ false: "#767577", true: "#0391C4" }}
-              thumbColor={darkModeEnabled ? "#fff" : "#f4f3f4"}
-            />
-          </View>
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon name="language" size={24} color="#0391C4" />
-              <Text style={styles.settingText}>Bahasa</Text>
-            </View>
-            <View style={styles.languageSelector}>
-              {["id", "en"].map((lang) => (
-                <TouchableOpacity
-                  key={lang}
-                  style={[
-                    styles.languageOption,
-                    language === lang && styles.selectedLanguage,
-                  ]}
-                  onPress={() => setLanguage(lang)}
-                >
-                  <Text
-                    style={[
-                      styles.languageText,
-                      language === lang && styles.selectedLanguageText,
-                    ]}
-                  >
-                    {lang.toUpperCase()}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
+          <MenuItem
+            icon="security"
+            text="Keamanan"
+            onPress={() => navigation.navigate('Security')}
+          />
+          <MenuItem
+            icon="help"
+            text="Bantuan"
+            onPress={() => navigation.navigate('Help')}
+          />
+          <MenuItem
+            icon="info"
+            text="Tentang Aplikasi"
+            onPress={() => navigation.navigate('About')}
+          />
         </View>
 
         <TouchableOpacity 
-          style={[styles.logoutButton, { marginBottom: 20 }]}
+          style={styles.logoutButton}
           onPress={() => navigation.navigate('Login')}
         >
           <Icon name="logout" size={24} color="#FFF" />
@@ -501,57 +502,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
     fontWeight: '500',
-  },
-  settingsSection: {
-    backgroundColor: '#FFF',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  settingLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 15,
-  },
-  settingText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  languageSelector: {
-    flexDirection: 'row',
-    backgroundColor: '#F7F9FC',
-    borderRadius: 20,
-    padding: 4,
-  },
-  languageOption: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginHorizontal: 2,
-  },
-  selectedLanguage: {
-    backgroundColor: '#0391C4',
-  },
-  languageText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  selectedLanguageText: {
-    color: '#FFF',
-    fontWeight: '600',
   },
   logoutButton: {
     backgroundColor: '#0391C4',
@@ -694,7 +644,52 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 16,
     color: '#666',
-  }
+  },
+  settingsSection: {
+    backgroundColor: '#FFF',
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 20,
+    elevation: 3,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15,
+  },
+  settingItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  settingLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  settingText: {
+    fontSize: 16,
+    color: '#333',
+    marginLeft: 15,
+  },
+  verifyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E6F2FF',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginTop: 10,
+  },
+  verifyText: {
+    color: '#0391C4',
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500',
+  },
 });
 
 export default ProfileScreen;

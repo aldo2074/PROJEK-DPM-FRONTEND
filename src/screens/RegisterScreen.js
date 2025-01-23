@@ -94,6 +94,13 @@ const RegisterScreen = ({ navigation }) => {
 
     setIsLoading(true);
     try {
+      // Log request data untuk debugging
+      console.log('Sending registration request with:', {
+        username: username.trim(),
+        email: email.trim().toLowerCase(),
+        password: password
+      });
+
       const response = await axios.post(`${AUTH_URL}/register`, {
         username: username.trim(),
         email: email.trim().toLowerCase(),
@@ -101,12 +108,18 @@ const RegisterScreen = ({ navigation }) => {
         confirmPassword: confirmPassword
       });
 
-      if (response.data.success) {
+      console.log('Registration response:', response.data); // Log response
+
+      if (response.data.token) {
         // Simpan token
         await AsyncStorage.setItem('authToken', response.data.token);
         
-        // Set default header untuk semua request axios
+        // Set default header untuk axios
         axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
+
+        // Verifikasi token tersimpan
+        const savedToken = await AsyncStorage.getItem('authToken');
+        console.log('Saved token:', savedToken);
 
         Toast.show({
           type: 'success',
@@ -115,7 +128,12 @@ const RegisterScreen = ({ navigation }) => {
           position: 'bottom'
         });
 
-        navigation.replace('RegistrationSuccessScreen');
+        // Tunggu sebentar sebelum navigasi
+        setTimeout(() => {
+          navigation.replace('RegistrationSuccessScreen');
+        }, 1000);
+      } else {
+        throw new Error('Token tidak ditemukan dalam response');
       }
     } catch (error) {
       console.error('Register error:', error.response?.data || error.message);

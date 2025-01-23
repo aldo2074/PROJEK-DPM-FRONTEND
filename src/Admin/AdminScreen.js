@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -7,29 +7,66 @@ import {
   ScrollView, 
   SafeAreaView,
   Platform,
-  FlatList
+  FlatList,
+  Alert
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import axios from 'axios';
+import { ORDER_URL } from '../../api';
+import Toast from 'react-native-toast-message';
 
 const AdminScreen = () => {
   const [selectedTab, setSelectedTab] = useState('orders');
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(false);
 
-  // Mock data for orders
-  const orders = [
-    {
-      id: '1',
-      customerName: 'John Doe',
-      service: 'Cuci Setrika',
-      items: [
-        { name: 'Kaos', quantity: 3 },
-        { name: 'Celana', quantity: 2 }
-      ],
-      total: 25000,
-      status: 'pending',
-      date: '2025-01-15'
-    },
-    // Add more orders as needed
-  ];
+  useEffect(() => {
+    if (selectedTab === 'orders') {
+      fetchOrders();
+    }
+  }, [selectedTab]);
+
+  const fetchOrders = async () => {
+    try {
+      setLoading(true);
+      const response = await axios.get(`${ORDER_URL}/admin/orders`);
+      console.log('Orders response:', response.data); // Untuk debugging
+      setOrders(response.data.orders);
+    } catch (error) {
+      console.error('Error fetching orders:', error.response?.data || error.message);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Gagal mengambil data pesanan'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateStatus = async (orderId, userId, newStatus) => {
+    try {
+      const response = await axios.put(`${ORDER_URL}/admin/update-status/${orderId}`, {
+        status: newStatus
+      });
+
+      if (response.data.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Sukses',
+          text2: 'Status pesanan berhasil diperbarui'
+        });
+        fetchOrders();
+      }
+    } catch (error) {
+      console.error('Error updating status:', error.response?.data || error.message);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Gagal memperbarui status pesanan'
+      });
+    }
+  };
 
   // Mock data for chats
   const chats = [
@@ -58,31 +95,89 @@ const AdminScreen = () => {
   const renderOrderItem = ({ item }) => (
     <View style={styles.cardContainer}>
       <View style={styles.cardHeader}>
-        <Text style={styles.customerName}>{item.customerName}</Text>
+        <Text style={styles.customerName}>{item.orderNumber}</Text>
         <View style={[
           styles.statusBadge,
-          { backgroundColor: item.status === 'pending' ? '#FFE4B5' : '#90EE90' }
+          { backgroundColor: getStatusColor(item.status) }
         ]}>
-          <Text style={styles.statusText}>
-            {item.status === 'pending' ? 'Menunggu' : 'Selesai'}
-          </Text>
+          <Text style={styles.statusText}>{item.status}</Text>
         </View>
       </View>
       
       <View style={styles.cardContent}>
-        <Text style={styles.serviceText}>{item.service}</Text>
-        {item.items.map((item, index) => (
-          <Text key={index} style={styles.itemText}>
-            {item.quantity}x {item.name}
-          </Text>
+        {item.items.map((serviceItem, index) => (
+          <View key={index}>
+            <Text style={styles.serviceText}>{serviceItem.service}</Text>
+            {serviceItem.items.map((subItem, subIndex) => (
+              <Text key={`${index}-${subIndex}`} style={styles.itemText}>
+                {subItem.quantity}x {subItem.name} (Rp {subItem.price.toLocaleString()})
+              </Text>
+            ))}
+          </View>
         ))}
+        
         <View style={styles.cardDivider} />
+        
+        <Text style={styles.detailText}>
+          Metode Pengiriman: {item.deliveryMethod}
+        </Text>
+        {item.deliveryAddress && (
+          <Text style={styles.detailText}>
+            Alamat: {item.deliveryAddress}
+          </Text>
+        )}
+        <Text style={styles.detailText}>
+          Pembayaran: {item.paymentMethod}
+        </Text>
+        
         <View style={styles.totalContainer}>
           <Text style={styles.totalLabel}>Total:</Text>
           <Text style={styles.totalAmount}>
-            Rp {item.total.toLocaleString()}
+            Rp {item.totalAmount.toLocaleString()}
           </Text>
         </View>
+
+        {item.status === 'Menunggu Konfirmasi' && (
+          <View style={styles.actionButtons}>
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.acceptButton]}
+              onPress={() => {
+                Alert.alert(
+                  'Konfirmasi',
+                  'Terima pesanan ini?',
+                  [
+                    { text: 'Batal', style: 'cancel' },
+                    { 
+                      text: 'Ya', 
+                      onPress: () => handleUpdateStatus(item._id, item.userId, 'Diproses')
+                    }
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.actionButtonText}>Terima</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.rejectButton]}
+              onPress={() => {
+                Alert.alert(
+                  'Konfirmasi',
+                  'Tolak pesanan ini?',
+                  [
+                    { text: 'Batal', style: 'cancel' },
+                    { 
+                      text: 'Ya', 
+                      onPress: () => handleUpdateStatus(item._id, item.userId, 'Ditolak')
+                    }
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.actionButtonText}>Tolak</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -159,6 +254,21 @@ const AdminScreen = () => {
         );
       default:
         return null;
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Menunggu Konfirmasi':
+        return '#FFE4B5';
+      case 'Diproses':
+        return '#87CEEB';
+      case 'Selesai':
+        return '#90EE90';
+      case 'Ditolak':
+        return '#FFB6C1';
+      default:
+        return '#F0F0F0';
     }
   };
 
@@ -451,6 +561,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  actionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+  },
+  actionButton: {
+    flex: 1,
+    padding: 10,
+    borderRadius: 8,
+    marginHorizontal: 5,
+    alignItems: 'center',
+  },
+  acceptButton: {
+    backgroundColor: '#4CAF50',
+  },
+  rejectButton: {
+    backgroundColor: '#F44336',
+  },
+  actionButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  detailText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+  }
 });
 
 export default AdminScreen;

@@ -46,18 +46,32 @@ const LoginScreen = ({ navigation }) => {
 
     setIsLoading(true);
     try {
+      // Cek apakah login sebagai admin
+      if (email === 'admin@admin.com' && password === 'admin123') {
+        await AsyncStorage.setItem('userToken', 'admin-token');
+        await AsyncStorage.setItem('userRole', 'admin');
+        
+        Toast.show({
+          type: 'success',
+          text1: 'Berhasil',
+          text2: 'Login admin berhasil',
+          position: 'bottom'
+        });
+
+        navigation.replace('Admin'); // Arahkan ke AdminScreen
+        return;
+      }
+
+      // Jika bukan admin, lakukan login user biasa
       const response = await axios.post(`${AUTH_URL}/login`, {
         email,
         password,
       });
 
-      console.log('Login response:', response.data); // Debug log
-
-      if (response.data.success && response.data.token) {
-        // Simpan token dengan key yang konsisten
+      if (response.data.success) {
         await AsyncStorage.setItem('userToken', response.data.token);
+        await AsyncStorage.setItem('userRole', 'user');
         
-        // Set default header untuk semua request axios
         axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
 
         Toast.show({
@@ -70,13 +84,9 @@ const LoginScreen = ({ navigation }) => {
         navigation.replace('Home');
       }
     } catch (error) {
-      console.error('Login error:', error.response?.data || error.message);
-      
       let errorMessage = 'Gagal login. Silakan coba lagi.';
       if (error.response?.data?.message) {
         errorMessage = error.response.data.message;
-      } else if (error.message === 'Network Error') {
-        errorMessage = 'Tidak dapat terhubung ke server';
       }
 
       Toast.show({
