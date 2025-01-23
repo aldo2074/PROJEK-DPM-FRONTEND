@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -11,20 +11,46 @@ import {
   SafeAreaView,
   Alert,
   Platform,
-  ActivityIndicator
+  ActivityIndicator,
+  BackHandler
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import Toast from 'react-native-toast-message';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CART_URL } from '../../../backend/config/config';
+import { CART_URL } from '../../../api';
 
 const { width } = Dimensions.get('window');
 
-const CuciSetrikaScreen = () => {
-  const navigation = useNavigation();
+const CuciSetrikaScreen = ({ route, navigation }) => {
+  const params = route?.params || {};
+  
+  const {
+    editMode = false,
+    existingItems = [],
+    serviceId = null,
+    serviceName = 'Cuci & Setrika'
+  } = params;
+
+  const [quantities, setQuantities] = useState(() => {
+    if (editMode && existingItems.length > 0) {
+      const initialQuantities = {};
+      existingItems.forEach(item => {
+        initialQuantities[item.name] = item.quantity;
+      });
+      return initialQuantities;
+    }
+    return {
+      'Kaos': 0,
+      'Kemeja': 0,
+      'Celana': 0
+    };
+  });
+
   const [isLoading, setIsLoading] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [showExistingServiceModal, setShowExistingServiceModal] = useState(false);
 
   const clothingTypes = [
     { 
@@ -50,19 +76,29 @@ const CuciSetrikaScreen = () => {
     }
   ];
 
-  const [quantities, setQuantities] = useState({
-    'Kaos': 0,
-    'Kemeja': 0,
-    'Celana': 0
-  });
-
   const updateQuantity = (type, value) => {
     setQuantities(prev => {
-      const newValue = typeof value === 'number' ? prev[type] + value : parseInt(value, 10) || 0;
-      return {
+      const newValue = typeof value === 'number' ? 
+        Math.max(0, prev[type] + value) : 
+        Math.max(0, parseInt(value, 10) || 0);
+
+      if (newValue > 20) {
+        Toast.show({
+          type: 'info',
+          text1: 'Maksimum 20 item',
+          text2: 'Jumlah maksimum per item adalah 20',
+          position: 'bottom'
+        });
+        return prev;
+      }
+
+      const newQuantities = {
         ...prev,
-        [type]: Math.max(0, newValue),
+        [type]: newValue
       };
+      
+      setHasChanges(true);
+      return newQuantities;
     });
   };
 
@@ -78,73 +114,143 @@ const CuciSetrikaScreen = () => {
 
   const hasItems = Object.values(quantities).some(qty => qty > 0);
 
-  const handleAddToCart = async () => {
-    const totalPrice = calculateTotalPrice();
-    if (totalPrice < 5000) {
-      Alert.alert(
-        'Pesanan Minimal',
-        'Total pembayaran harus minimal Rp 5.000',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+  // Prevent accidental back navigation
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress
+    );
+    return () => backHandler.remove();
+  }, [hasChanges]);
 
-    setIsLoading(true);
+  const handleBackPress = () => {
+    if (hasChanges) {
+      Alert.alert(
+        'Batalkan Perubahan?',
+        'Perubahan yang belum disimpan akan hilang',
+        [
+          { text: 'Tetap Disini', style: 'cancel' },
+          { 
+            text: 'Batalkan', 
+            style: 'destructive',
+            onPress: () => navigation.goBack()
+          }
+        ]
+      );
+      return true;
+    }
+    return false;
+  };
+
+  const handleReset = () => {
+    setQuantities({
+      'Kaos': 0,
+      'Kemeja': 0,
+      'Celana': 0
+    });
+    setHasChanges(false);
+  };
+
+  const handleSubmit = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      if (!token) {
-        navigation.navigate('Login');
+      // Validasi item yang dipilih
+      const selectedItems = Object.entries(quantities)
+        .filter(([_, quantity]) => quantity > 0)
+        .map(([name, quantity]) => ({
+          name,
+          quantity,
+          price: clothingTypes.find(type => type.name === name)?.price || 0
+        }));
+
+      if (selectedItems.length === 0) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Pilih minimal 1 item',
+          position: 'bottom'
+        });
         return;
       }
 
-      const selectedItems = clothingTypes
-        .filter(type => quantities[type.name] > 0)
-        .map(type => ({
-          name: type.name,
-          quantity: quantities[type.name],
-          price: type.price
-        }));
+      setIsLoading(true);
+      const token = await AsyncStorage.getItem('userToken');
+      
+      if (!token) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Sesi anda telah berakhir',
+          position: 'bottom'
+        });
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+        return;
+      }
+
+      const totalPrice = selectedItems.reduce(
+        (sum, item) => sum + (item.price * item.quantity), 
+        0
+      );
 
       const cartData = {
         service: 'Cuci & Setrika',
         items: selectedItems,
-        totalPrice: calculateTotalPrice()
+        totalPrice,
+        serviceId: params?.serviceId || null,
+        isEdit: Boolean(editMode)
       };
 
-      await axios.post(`${CART_URL}/add`, cartData, {
+      console.log('Sending cart data:', cartData);
+
+      const response = await axios.post(CART_URL, cartData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
 
-      Alert.alert(
-        'Berhasil',
-        'Pesanan berhasil ditambahkan ke keranjang',
-        [
-          {
-            text: 'Lihat Keranjang',
-            onPress: () => navigation.navigate('Cart')
-          },
-          {
-            text: 'Lanjut Belanja',
-            style: 'cancel'
-          }
-        ]
-      );
+      console.log('Cart response:', response.data);
 
-      setQuantities({
-        'Kaos': 0,
-        'Kemeja': 0,
-        'Celana': 0
-      });
-
+      if (response.data.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Berhasil',
+          text2: editMode ? 'Layanan berhasil diperbarui' : 'Layanan berhasil ditambahkan',
+          position: 'bottom'
+        });
+        handleReset();
+        navigation.navigate('Cart', { refresh: true });
+      }
     } catch (error) {
-      console.error('Error adding to cart:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.error || 'Gagal menambahkan ke keranjang'
-      );
+      if (error.response?.data) {
+        console.log('Server response:', error.response.data);
+      } else {
+        console.log('Error:', error.message);
+      }
+      
+      if (error.response?.status === 401) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Sesi anda telah berakhir',
+          position: 'bottom'
+        });
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+      } else if (error.response?.data?.existingService) {
+        setShowExistingServiceModal(true);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: error.response?.data?.error || 'Gagal menambahkan ke keranjang',
+          position: 'bottom'
+        });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -155,7 +261,9 @@ const CuciSetrikaScreen = () => {
       <View style={styles.headerBackground}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Cuci & Setrika</Text>
-          <Text style={styles.headerSubtitle}>Layanan premium untuk pakaian Anda</Text>
+          <Text style={styles.headerSubtitle}>
+            Layanan premium untuk pakaian Anda
+          </Text>
         </View>
       </View>
 
@@ -182,92 +290,148 @@ const CuciSetrikaScreen = () => {
           <Text style={styles.sectionTitle}>Pilih Jenis Pakaian</Text>
           
           {clothingTypes.map((type) => (
-            <View key={type.id} style={styles.itemContainer}>
-              <View style={styles.itemLeft}>
-                <View style={styles.iconContainer}>
-                  <Image source={type.icon} style={styles.itemIcon} />
+            <View key={type.id} style={styles.clothingItemContainer}>
+              <View style={styles.clothingItemLeft}>
+                <View style={styles.clothingIconContainer}>
+                  <Image source={type.icon} style={styles.clothingIcon} />
                 </View>
-                <View style={styles.itemInfo}>
-                  <Text style={styles.itemName}>{type.name}</Text>
-                  <Text style={styles.itemDescription}>{type.description}</Text>
-                  <Text style={styles.itemPrice}>Rp {type.price.toLocaleString()}/pcs</Text>
+                <View style={styles.clothingTextContainer}>
+                  <Text style={styles.clothingName}>{type.name}</Text>
+                  <Text style={styles.clothingDescription}>{type.description}</Text>
+                  <Text style={styles.clothingPrice}>
+                    Rp {type.price.toLocaleString()}/pcs
+                  </Text>
                 </View>
               </View>
               
               <View style={styles.quantityContainer}>
                 <TouchableOpacity 
-                  style={styles.quantityButton}
+                  style={[
+                    styles.quantityButton,
+                    quantities[type.name] === 0 && styles.quantityButtonDisabled
+                  ]}
                   onPress={() => updateQuantity(type.name, -1)}
                 >
-                  <Icon name="remove" size={20} color="#0391C4" />
+                  <Text style={[
+                    styles.quantityButtonText,
+                    quantities[type.name] === 0 && styles.quantityButtonTextDisabled
+                  ]}>-</Text>
                 </TouchableOpacity>
                 
-                <TextInput
+                <TextInput 
                   style={styles.quantityInput}
                   value={quantities[type.name].toString()}
-                  onChangeText={(value) => updateQuantity(type.name, value)}
-                  keyboardType="number-pad"
+                  onChangeText={(text) => updateQuantity(type.name, text)}
+                  keyboardType="numeric"
                 />
                 
                 <TouchableOpacity 
                   style={styles.quantityButton}
                   onPress={() => updateQuantity(type.name, 1)}
                 >
-                  <Icon name="add" size={20} color="#0391C4" />
+                  <Text style={styles.quantityButtonText}>+</Text>
                 </TouchableOpacity>
               </View>
             </View>
           ))}
         </View>
 
-        {/* Price Summary */}
-        <View style={styles.summaryContainer}>
-          <Text style={styles.summaryTitle}>Ringkasan Pesanan</Text>
-          
-          {clothingTypes.map((type) => (
-            quantities[type.name] > 0 && (
-              <View key={type.id} style={styles.summaryItem}>
-                <Text style={styles.summaryText}>
-                  {type.name} x {quantities[type.name]}
-                </Text>
-                <Text style={styles.summaryValue}>
-                  Rp {(type.price * quantities[type.name]).toLocaleString()}
+        {hasItems && (
+          <View style={styles.totalPriceContainer}>
+            <Text style={styles.summaryTitle}>Ringkasan Pesanan</Text>
+            <View style={styles.summaryInfo}>
+              <Text style={styles.summaryText}>Total Item:</Text>
+              <Text style={styles.summaryValue}>{calculateTotalItems()} pcs</Text>
+            </View>
+            
+            <View style={styles.totalPriceBreakdown}>
+              {clothingTypes.map((type) => {
+                const itemTotal = type.price * quantities[type.name];
+                if (itemTotal > 0) {
+                  return (
+                    <View key={type.id} style={styles.priceBreakdownItem}>
+                      <Text style={styles.priceBreakdownText}>
+                        {type.name} ({quantities[type.name]} pcs)
+                      </Text>
+                      <Text style={styles.priceBreakdownValue}>
+                        Rp {itemTotal.toLocaleString()}
+                      </Text>
+                    </View>
+                  );
+                }
+                return null;
+              })}
+              <View style={styles.totalPriceDivider} />
+              <View style={styles.priceBreakdownItem}>
+                <Text style={styles.totalPriceLabel}>Total Pembayaran</Text>
+                <Text style={styles.totalPriceValue}>
+                  Rp {calculateTotalPrice().toLocaleString()}
                 </Text>
               </View>
-            )
-          ))}
-          
-          <View style={styles.totalContainer}>
-            <Text style={styles.totalText}>Total</Text>
-            <Text style={styles.totalPrice}>
-              Rp {calculateTotalPrice().toLocaleString()}
-            </Text>
+            </View>
           </View>
-        </View>
+        )}
       </ScrollView>
 
-      {/* Bottom Buttons */}
-      <View style={styles.bottomButtonsContainer}>
-        <TouchableOpacity
-          style={[
-            styles.cartButton,
-            !hasItems && styles.disabledButton
-          ]}
-          onPress={handleAddToCart}
-          disabled={!hasItems || isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#0391C4" />
-          ) : (
-            <>
-              <Icon name="shopping-cart" size={24} color="#0391C4" />
-              <Text style={styles.cartButtonText}>Tambah ke Keranjang</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
+      {hasItems ? (
+        <View style={styles.bottomButtonsContainer}>
+          <TouchableOpacity
+            style={styles.resetButton}
+            onPress={handleReset}
+            disabled={isLoading}
+          >
+            <Icon name="refresh" size={20} color="#FF3B30" />
+            <Text style={styles.resetButtonText}>Reset</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.cartButton]}
+            onPress={handleSubmit}
+            disabled={isLoading}
+          >
+            <Icon name="shopping-cart" size={24} color="#0391C4" />
+            <Text style={styles.cartButtonText}>
+              {editMode ? 'Simpan Perubahan' : 'Masukkan Keranjang'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.bottomButtonsContainer}>
+          <TouchableOpacity 
+            style={[styles.singleButton, styles.disabledButton]} 
+            disabled={true}
+          >
+            <Text style={styles.orderButtonText}>Pilih Pakaian</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      <Toast />
+      {showExistingServiceModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Icon name="error-outline" size={50} color="#FF3B30" />
+            <Text style={styles.modalTitle}>Layanan Sudah Ada</Text>
+            <Text style={styles.modalText}>
+              Anda sudah memiliki layanan ini di keranjang. Silakan selesaikan atau hapus layanan yang ada terlebih dahulu.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => {
+                setShowExistingServiceModal(false);
+                navigation.navigate('Cart');
+              }}
+            >
+              <Text style={styles.modalButtonText}>Lihat Keranjang</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondaryButton}
+              onPress={() => setShowExistingServiceModal(false)}
+            >
+              <Text style={styles.modalSecondaryButtonText}>Tutup</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -344,7 +508,7 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 15,
   },
-  itemContainer: {
+  clothingItemContainer: {
     backgroundColor: 'white',
     borderRadius: 15,
     padding: 15,
@@ -355,37 +519,37 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  itemLeft: {
+  clothingItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
   },
-  iconContainer: {
+  clothingIconContainer: {
     backgroundColor: '#E6F2FF',
     borderRadius: 15,
     padding: 12,
     marginRight: 15,
   },
-  itemIcon: {
+  clothingIcon: {
     width: 35,
     height: 35,
     resizeMode: 'contain',
   },
-  itemInfo: {
+  clothingTextContainer: {
     flex: 1,
   },
-  itemName: {
+  clothingName: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 2,
   },
-  itemDescription: {
+  clothingDescription: {
     fontSize: 13,
     color: '#666',
     marginBottom: 4,
   },
-  itemPrice: {
+  clothingPrice: {
     fontSize: 15,
     color: '#0391C4',
     fontWeight: '600',
@@ -406,6 +570,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  quantityButtonText: {
+    color: '#333',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  quantityButtonDisabled: {
+    opacity: 0.7
+  },
   quantityInput: {
     width: 50,
     textAlign: 'center',
@@ -413,7 +585,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
-  summaryContainer: {
+  totalPriceContainer: {
     backgroundColor: 'white',
     borderRadius: 15,
     padding: 15,
@@ -430,10 +602,10 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 10,
   },
-  summaryItem: {
+  summaryInfo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   summaryText: {
     fontSize: 14,
@@ -444,16 +616,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0391C4',
   },
-  totalContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  totalPriceBreakdown: {
     marginTop: 10,
   },
-  totalText: {
+  priceBreakdownItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  priceBreakdownText: {
     fontSize: 14,
     color: '#666',
   },
-  totalPrice: {
+  priceBreakdownValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0391C4',
+  },
+  totalPriceDivider: {
+    height: 1,
+    backgroundColor: '#F0F0F0',
+    marginVertical: 10,
+  },
+  totalPriceLabel: {
+    fontSize: 14,
+    color: '#666',
+  },
+  totalPriceValue: {
     fontSize: 14,
     fontWeight: '600',
     color: '#0391C4',
@@ -468,7 +657,7 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 30 : 15,
     borderTopWidth: 1,
     borderTopColor: '#F0F0F0',
-    flexDirection: 'column',
+    flexDirection: 'row',
     gap: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -3 },
@@ -476,7 +665,25 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 10,
   },
+  resetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFE5E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+  },
+  resetButtonText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
   cartButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -492,8 +699,86 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
+  singleButton: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   disabledButton: {
     backgroundColor: '#B0E0FF',
+  },
+  orderButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    width: '85%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  modalText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalButton: {
+    backgroundColor: '#0391C4',
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  modalButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalSecondaryButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalSecondaryButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });
 

@@ -10,87 +10,85 @@ import {
   ImageBackground, 
   Dimensions,
   StatusBar,
-  ActivityIndicator 
+  ActivityIndicator,
+  SafeAreaView,
+  Alert
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_URL } from '../../backend/config/config';
+import { AUTH_URL } from '../../api';
 import LaundryLogo from '../../assets/icons/laundry-logo.png';
 import BackgroundImage from '../../assets/background.jpg';
 import axios from 'axios';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
 
 const windowWidth = Dimensions.get('window').width;
 const windowHeight = Dimensions.get('window').height;
 
-const LoginScreen = () => {
+const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const navigation = useNavigation();
 
-  const showToast = (type, text1, text2) => {
-    Toast.show({
-      type: type,
-      text1: text1,
-      text2: text2,
-      position: 'top',
-      visibilityTime: 4000,
-    });
-  };
-
-  const validateInputs = () => {
+  const handleLogin = async () => {
     if (!email || !password) {
-      showToast('error', 'Input Tidak Lengkap', 'Email dan kata sandi harus diisi.');
-      return false;
-    }
-    if (!/\S+@\S+\.\S+/.test(email)) {
-      showToast('error', 'Email Tidak Valid', 'Masukkan alamat email yang valid.');
-      return false;
-    }
-    return true;
-  };
-  // LoginScreen.js
-const handleSignIn = async () => {
-  if (!validateInputs()) return;
-
-  setIsLoading(true);
-  try {
-    // Cek login admin
-    if (email.trim() === 'admin@admin.com' && password === 'admin') {
-      await AsyncStorage.setItem('userRole', 'admin');
-      showToast('success', 'Login Berhasil', 'Selamat datang Admin!');
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Admin' }],
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Mohon isi semua field',
+        position: 'bottom'
       });
       return;
     }
 
-    // Login untuk user biasa
-    const response = await axios.post(`${API_URL}/login`, {
-      email: email.trim(),
-      password: password,
-    });
+    setIsLoading(true);
+    try {
+      const response = await axios.post(`${AUTH_URL}/login`, {
+        email,
+        password,
+      });
 
-    const data = response.data;
-    await AsyncStorage.setItem('authToken', data.token);
-    await AsyncStorage.setItem('userRole', 'user');
-    showToast('success', 'Login Berhasil', 'Selamat datang!');
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'Home' }],
-    });
+      console.log('Login response:', response.data); // Debug log
 
-  } catch (error) {
-    console.error('Error during login:', error);
-    showToast('error', 'Login Gagal', 'Email atau password salah');
-  } finally {
-    setIsLoading(false);
-  }
-};
+      if (response.data.success && response.data.token) {
+        // Simpan token dengan key yang konsisten
+        await AsyncStorage.setItem('userToken', response.data.token);
+        
+        // Set default header untuk semua request axios
+        axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
+
+        Toast.show({
+          type: 'success',
+          text1: 'Berhasil',
+          text2: 'Login berhasil',
+          position: 'bottom'
+        });
+
+        navigation.replace('Home');
+      }
+    } catch (error) {
+      console.error('Login error:', error.response?.data || error.message);
+      
+      let errorMessage = 'Gagal login. Silakan coba lagi.';
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message === 'Network Error') {
+        errorMessage = 'Tidak dapat terhubung ke server';
+      }
+
+      Toast.show({
+        type: 'error',
+        text1: 'Login Gagal',
+        text2: errorMessage,
+        position: 'bottom'
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleRegister = () => {
     navigation.navigate('Register');
@@ -101,7 +99,7 @@ const handleSignIn = async () => {
   };
 
   return (
-    <>
+    <SafeAreaView style={styles.container}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <ImageBackground 
         source={BackgroundImage} 
@@ -117,17 +115,22 @@ const handleSignIn = async () => {
             />
 
             <View style={styles.inputContainer}>
-              <TextInput
-                style={styles.inputField}
-                placeholder="Email"
-                placeholderTextColor="#888"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                editable={!isLoading}
-              />
+              <View style={styles.inputWrapper}>
+                <Icon name="email" size={20} color="#0391C4" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.inputField}
+                  placeholder="Email"
+                  placeholderTextColor="#888"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  editable={!isLoading}
+                />
+              </View>
+
               <View style={styles.passwordContainer}>
+                <Icon name="lock" size={20} color="#0391C4" style={styles.inputIcon} />
                 <TextInput
                   style={[styles.inputField, styles.passwordInput]}
                   placeholder="Kata Sandi"
@@ -142,9 +145,11 @@ const handleSignIn = async () => {
                   onPress={() => setShowPassword(!showPassword)}
                   disabled={isLoading}
                 >
-                  <Text style={styles.showPasswordText}>
-                    {showPassword ? 'Sembunyikan' : 'Tampilkan'}
-                  </Text>
+                  <Icon 
+                    name={showPassword ? "visibility-off" : "visibility"} 
+                    size={20} 
+                    color="#0391C4" 
+                  />
                 </TouchableOpacity>
               </View>
             </View>
@@ -159,13 +164,16 @@ const handleSignIn = async () => {
 
             <TouchableOpacity 
               style={[styles.signInButton, isLoading && styles.disabledButton]} 
-              onPress={handleSignIn}
+              onPress={handleLogin}
               disabled={isLoading}
             >
               {isLoading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.signInText}>Masuk</Text>
+                <View style={styles.signInContent}>
+                  <Icon name="login" size={20} color="#fff" />
+                  <Text style={styles.signInText}>Masuk</Text>
+                </View>
               )}
             </TouchableOpacity>
 
@@ -181,15 +189,15 @@ const handleSignIn = async () => {
           </View>
         </View>
       </ImageBackground>
-    </>
+      <Toast />
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
   },
   backgroundImage: {
     opacity: 0.7,
@@ -223,34 +231,40 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 10,
   },
-  inputField: {
-    width: '100%',
-    height: 55,
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
     borderColor: '#0391C4',
     borderWidth: 1,
     borderRadius: 12,
     marginBottom: 15,
-    paddingHorizontal: 15,
-    fontSize: 16,
-    color: '#333',
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
   },
+  inputIcon: {
+    padding: 15,
+  },
+  inputField: {
+    flex: 1,
+    height: 55,
+    fontSize: 16,
+    color: '#333',
+    paddingRight: 15,
+  },
   passwordContainer: {
-    position: 'relative',
-    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderColor: '#0391C4',
+    borderWidth: 1,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
   },
   passwordInput: {
-    paddingRight: 100,
+    paddingRight: 50,
   },
   showPasswordButton: {
     position: 'absolute',
     right: 15,
-    top: 15,
-  },
-  showPasswordText: {
-    color: '#0391C4',
-    fontWeight: 'bold',
-    fontSize: 14,
+    padding: 10,
   },
   forgotPasswordLink: {
     alignSelf: 'flex-end',
@@ -275,13 +289,19 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  disabledButton: {
-    backgroundColor: '#B3D5E6',
+  signInContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   signInText: {
     color: 'white',
     fontSize: 18,
     fontWeight: '600',
+    marginLeft: 8,
+  },
+  disabledButton: {
+    backgroundColor: '#B3D5E6',
   },
   registerLink: {
     marginTop: 20,

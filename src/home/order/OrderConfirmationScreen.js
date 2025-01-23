@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,17 +14,19 @@ import {
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import MapView, { Marker } from 'react-native-maps';
+import { ORDER_URL, AUTH_URL, VALIDATE_TOKEN_URL } from '../../../api';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const OrderConfirmationScreen = () => {
+const OrderConfirmationScreen = ({ route }) => {
   const navigation = useNavigation();
+  const { cartItems } = route.params || { cartItems: [] };
   const [isLoading, setIsLoading] = useState(false);
   const [address, setAddress] = useState('');
   const [note, setNote] = useState('');
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [deliveryMethod, setDeliveryMethod] = useState(null);
-  const [selectedLocation, setSelectedLocation] = useState(null); // Track selected location
-  const [mapVisible, setMapVisible] = useState(false); // Control map visibility
+  const [token, setToken] = useState(null);
 
   // Payment methods data
   const paymentMethods = [
@@ -60,8 +62,182 @@ const OrderConfirmationScreen = () => {
     },
   ];
 
-  // Validate order details
+  // Calculate total amount including delivery fee
+  const deliveryFee = deliveryMethod === 'pickup' ? 5000 : 0;
+  const subtotal = cartItems.reduce((sum, service) => sum + service.totalPrice, 0);
+  const totalAmount = subtotal + deliveryFee;
+
+  useEffect(() => {
+    const initializeScreen = async () => {
+      await checkToken();
+    };
+    initializeScreen();
+  }, []);
+
+  const checkToken = async () => {
+    try {
+      const userToken = await AsyncStorage.getItem('userToken');
+      console.log('Token from storage:', userToken);
+
+      if (!userToken) {
+        console.log('Token not found in storage');
+        handleSessionExpired('Token tidak ditemukan');
+        return;
+      }
+
+      axios.defaults.headers.common['Authorization'] = `Bearer ${userToken}`;
+
+      try {
+        const response = await axios.get(`${AUTH_URL}/validate`);
+        console.log('Token validation response:', response.data);
+
+        if (response.data.success) {
+          setToken(userToken);
+        } else {
+          handleSessionExpired('Token tidak valid');
+        }
+      } catch (error) {
+        if (error.response?.status === 404) {
+          console.error('Endpoint not found:', error.response.data);
+          setToken(userToken);
+        } else {
+          console.error('Token validation error:', error.response?.data || error.message);
+          handleSessionExpired(error.response?.data?.error || 'Gagal memvalidasi token');
+        }
+      }
+
+    } catch (error) {
+      console.error('Error checking token:', error);
+      handleSessionExpired('Gagal memeriksa token');
+    }
+  };
+
+  const handleSessionExpired = (message) => {
+    console.log('Session expired:', message);
+    
+    AsyncStorage.multiRemove(['userToken', 'cartData'])
+      .then(() => {
+        Alert.alert(
+          'Sesi Berakhir',
+          message || 'Silakan login kembali untuk melanjutkan',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Login' }],
+                });
+              },
+            },
+          ],
+          { cancelable: false }
+        );
+      })
+      .catch((error) => {
+        console.error('Error removing data:', error);
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+      });
+  };
+
+  const handleConfirmOrder = async () => {
+    if (!validateOrder()) return;
+    setIsLoading(true);
+
+    try {
+      const currentToken = await AsyncStorage.getItem('userToken');
+      console.log('Token for order:', currentToken);
+      console.log('Cart Items:', cartItems); // Debug cartItems
+
+      if (!currentToken) {
+        handleSessionExpired('Token tidak ditemukan');
+        return;
+      }
+
+      // Validate cart items first
+      if (!cartItems || cartItems.length === 0) {
+        Alert.alert('Error', 'Keranjang belanja kosong');
+        setIsLoading(false);
+        return;
+      }
+
+      // Prepare order data
+      const orderData = {
+        items: cartItems.map(service => ({
+          service: service.service,
+          items: service.items.map(item => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price || 0
+          })),
+          totalPrice: service.totalPrice
+        })),
+        totalAmount,
+        deliveryFee,
+        subtotal,
+        deliveryMethod,
+        deliveryAddress: deliveryMethod === 'pickup' ? address : '',
+        paymentMethod: selectedPayment,
+        notes: note || ''
+      };
+
+      console.log('Sending order data:', JSON.stringify(orderData, null, 2)); // Pretty print order data
+
+      const response = await axios.post(
+        `${ORDER_URL}/create`,
+        orderData,
+        {
+          headers: {
+            'Authorization': `Bearer ${currentToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log('Order response:', response.data);
+
+      if (response.data.success) {
+        // Clear cart data
+        await AsyncStorage.removeItem('cartData');
+        
+        // Navigate to success screen with order details
+        navigation.replace('OrderSuccess', {
+          orderNumber: response.data.order.orderNumber,
+          totalAmount: response.data.order.totalAmount,
+          deliveryMethod: response.data.order.deliveryMethod,
+          estimatedDoneDate: response.data.order.estimatedDoneDate,
+          items: response.data.order.items
+        });
+      } else {
+        throw new Error(response.data.error || 'Gagal membuat pesanan');
+      }
+
+    } catch (error) {
+      console.error('Error creating order:', error.response?.data || error);
+      
+      const errorMessage = error.response?.data?.error || 
+                         error.message || 
+                         'Terjadi kesalahan saat memproses pesanan';
+      
+      Alert.alert(
+        'Error',
+        errorMessage,
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const validateOrder = () => {
+    if (!cartItems || cartItems.length === 0) {
+      Alert.alert('Error', 'Keranjang belanja kosong');
+      return false;
+    }
+
     if (!deliveryMethod) {
       Alert.alert('Error', 'Silakan pilih metode pengiriman');
       return false;
@@ -76,31 +252,8 @@ const OrderConfirmationScreen = () => {
       Alert.alert('Error', 'Silakan masukkan alamat pengambilan');
       return false;
     }
-    
+
     return true;
-  };
-
-  // Handle order confirmation
-  const handleConfirmOrder = async () => {
-    if (!validateOrder()) return;
-
-    setIsLoading(true);
-
-    try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Navigate to success screen
-      navigation.replace('OrderSuccess');
-    } catch (error) {
-      Alert.alert(
-        'Error',
-        'Terjadi kesalahan saat memproses pesanan. Silakan coba lagi.',
-        [{ text: 'OK' }]
-      );
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   // Render payment method item
@@ -136,45 +289,112 @@ const OrderConfirmationScreen = () => {
     </TouchableOpacity>
   );
 
-  const handleMapPress = (event) => {
-    const { coordinate } = event.nativeEvent;
-    setSelectedLocation(coordinate);
-    setAddress(`Lat: ${coordinate.latitude}, Lng: ${coordinate.longitude}`);
-    setMapVisible(false); // Close the map after selection
-  };
+  // Render service items
+  const renderServiceItems = (service) => (
+    <View key={service._id} style={styles.orderItem}>
+      <Icon name="local-laundry-service" size={24} color="#0391C4" />
+      <View style={styles.orderItemContent}>
+        <Text style={styles.orderItemTitle}>{service.service}</Text>
+        <Text style={styles.orderItemSubtitle}>
+          {service.items.reduce((sum, item) => sum + item.quantity, 0)} items • 2-3 hari kerja
+        </Text>
+        <View style={styles.itemsList}>
+          {service.items.map((item, index) => (
+            <Text key={index} style={styles.itemDetail}>
+              {item.name} ({item.quantity}x)
+            </Text>
+          ))}
+        </View>
+      </View>
+      <Text style={styles.orderItemPrice}>
+        Rp {service.totalPrice.toLocaleString()}
+      </Text>
+    </View>
+  );
+
+  // Add useEffect to check cart items on mount
+  useEffect(() => {
+    const checkCartItems = async () => {
+      try {
+        const savedCartData = await AsyncStorage.getItem('cartData');
+        if (savedCartData) {
+          const parsedCartData = JSON.parse(savedCartData);
+          if (!parsedCartData || parsedCartData.length === 0) {
+            Alert.alert(
+              'Keranjang Kosong',
+              'Silakan tambahkan item ke keranjang terlebih dahulu',
+              [
+                {
+                  text: 'OK',
+                  onPress: () => navigation.goBack()
+                }
+              ]
+            );
+          }
+        }
+      } catch (error) {
+        console.error('Error checking cart data:', error);
+      }
+    };
+
+    checkCartItems();
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.content}>
-        {/* Order Summary */}
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Konfirmasi Pesanan</Text>
+      </View>
+
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Order Summary Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Ringkasan Pesanan</Text>
-          <View style={styles.orderItem}>
-            <Icon name="local-laundry-service" size={24} color="#0391C4" />
-            <View style={styles.orderItemContent}>
-              <Text style={styles.orderItemTitle}>Cuci & Setrika</Text>
-              <Text style={styles.orderItemSubtitle}>3 items • 2-3 hari kerja</Text>
+          {cartItems.map(renderServiceItems)}
+          <View style={styles.totalContainer}>
+            <Text style={styles.totalLabel}>Subtotal</Text>
+            <Text style={styles.totalAmount}>
+              Rp {subtotal.toLocaleString()}
+            </Text>
+          </View>
+          {deliveryMethod === 'pickup' && (
+            <View style={styles.deliveryFeeContainer}>
+              <Text style={styles.totalLabel}>Biaya Pengiriman</Text>
+              <Text style={styles.totalAmount}>
+                Rp {deliveryFee.toLocaleString()}
+              </Text>
             </View>
-            <Text style={styles.orderItemPrice}>Rp 50.000</Text>
+          )}
+          <View style={styles.grandTotalContainer}>
+            <Text style={styles.grandTotalLabel}>Total Pembayaran</Text>
+            <Text style={styles.grandTotalAmount}>
+              Rp {totalAmount.toLocaleString()}
+            </Text>
           </View>
         </View>
 
-        {/* Delivery Method */}
+        {/* Delivery Method Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Metode Pengiriman</Text>
           {deliveryMethods.map((method) => (
             <TouchableOpacity
               key={method.id}
               style={[
-                styles.deliveryMethod,
-                deliveryMethod === method.id && styles.selectedDelivery,
+                styles.methodOption,
+                deliveryMethod === method.id && styles.selectedMethod,
               ]}
               onPress={() => setDeliveryMethod(method.id)}
             >
-              <Icon name={method.icon} size={24} color="#0391C4" />
-              <View style={styles.deliveryMethodContent}>
+              <View style={styles.methodIconContainer}>
+                <Icon name={method.icon} size={24} color="#0391C4" />
+              </View>
+              <View style={styles.methodContent}>
                 <Text style={styles.methodTitle}>{method.name}</Text>
                 <Text style={styles.methodDescription}>{method.description}</Text>
+                {method.id === 'pickup' && (
+                  <Text style={styles.deliveryFeeText}>Biaya pengiriman Rp 5.000</Text>
+                )}
               </View>
               <View style={styles.radioButton}>
                 {deliveryMethod === method.id && (
@@ -185,55 +405,29 @@ const OrderConfirmationScreen = () => {
           ))}
         </View>
 
-        {/* Address Input (for pickup method) */}
+        {/* Address Input Card (for pickup method) */}
         {deliveryMethod === 'pickup' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Alamat Pengambilan</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Masukkan alamat lengkap"
-              value={address}
-              onChangeText={setAddress}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
-            <TouchableOpacity
-              style={styles.mapButton}
-              onPress={() => setMapVisible(true)}
-            >
-              <Text style={styles.mapButtonText}>Pilih Lokasi di Peta</Text>
-            </TouchableOpacity>
+            <View style={styles.addressInputContainer}>
+              <Icon name="location-on" size={20} color="#666666" style={styles.addressIcon} />
+              <TextInput
+                style={styles.addressInput}
+                placeholder="Masukkan alamat lengkap pengambilan"
+                value={address}
+                onChangeText={setAddress}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </View>
+            <Text style={styles.addressHelper}>
+              Masukkan alamat lengkap termasuk nomor rumah/gedung, RT/RW, dan kode pos
+            </Text>
           </View>
         )}
 
-        {/* Map View */}
-        {mapVisible && (
-          <View style={styles.mapContainer}>
-            <MapView
-              style={styles.map}
-              initialRegion={{
-                latitude: -6.200000,
-                longitude: 106.816666,
-                latitudeDelta: 0.0922,
-                longitudeDelta: 0.0421,
-              }}
-              onPress={handleMapPress}
-            >
-              {selectedLocation && (
-                <Marker coordinate={selectedLocation} />
-              )}
-            </MapView>
-            <TouchableOpacity
-              style={styles.closeMapButton}
-              onPress={() => setMapVisible(false)}
-            >
-              <Text style={styles.closeMapButtonText}>Tutup Peta</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Additional Notes */}
+        {/* Additional Notes Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Catatan Tambahan</Text>
           <TextInput
@@ -247,18 +441,28 @@ const OrderConfirmationScreen = () => {
           />
         </View>
 
-        {/* Payment Methods */}
+        {/* Payment Methods Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Metode Pembayaran</Text>
           {paymentMethods.map(renderPaymentMethod)}
         </View>
+
+        {/* Bottom spacing */}
+        <View style={styles.bottomSpacing} />
       </ScrollView>
 
       {/* Bottom Action */}
       <View style={styles.bottomContainer}>
         <View style={styles.priceContainer}>
-          <Text style={styles.priceLabel}>Total Pembayaran</Text>
-          <Text style={styles.priceValue}>Rp 50.000</Text>
+          <View>
+            <Text style={styles.priceLabel}>Total Pembayaran</Text>
+            {deliveryMethod === 'pickup' && (
+              <Text style={styles.deliveryFeeInfo}>Termasuk biaya pengiriman</Text>
+            )}
+          </View>
+          <Text style={styles.priceValue}>
+            Rp {totalAmount.toLocaleString()}
+          </Text>
         </View>
         <TouchableOpacity
           style={[
@@ -271,7 +475,10 @@ const OrderConfirmationScreen = () => {
           {isLoading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.confirmButtonText}>Konfirmasi Pesanan</Text>
+            <>
+              <Icon name="check-circle" size={24} color="#FFFFFF" style={styles.confirmButtonIcon} />
+              <Text style={styles.confirmButtonText}>Konfirmasi Pesanan</Text>
+            </>
           )}
         </TouchableOpacity>
       </View>
@@ -284,15 +491,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F7F9FC',
   },
+  header: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333333',
+  },
   content: {
     flex: 1,
-    padding: 20,
+    padding: 16,
   },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -302,49 +520,154 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
+    color: '#333333',
+    marginBottom: 16,
   },
-  orderItem: {
+  methodOption: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  selectedMethod: {
+    backgroundColor: '#E6F2FF',
+    borderColor: '#0391C4',
+  },
+  methodIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  methodContent: {
+    flex: 1,
+    marginRight: 8,
+  },
+  methodTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333333',
+    marginBottom: 4,
+  },
+  methodDescription: {
+    fontSize: 14,
+    color: '#666666',
+  },
+  input: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 12,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    fontSize: 14,
+    color: '#333333',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  bottomSpacing: {
+    height: 100,
+  },
+  bottomContainer: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  priceContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  priceLabel: {
+    fontSize: 14,
+    color: '#666666',
+  },
+  priceValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#0391C4',
+  },
+  confirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0391C4',
+    padding: 16,
+    borderRadius: 12,
+  },
+  confirmButtonIcon: {
+    marginRight: 8,
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  disabledButton: {
+    backgroundColor: '#B0E0FF',
+  },
+  // Existing styles for order items
+  orderItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
   orderItemContent: {
     flex: 1,
-    marginLeft: 15,
+    marginLeft: 12,
   },
   orderItemTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: '#333333',
+    marginBottom: 4,
   },
   orderItemSubtitle: {
     fontSize: 14,
-    color: '#666',
-    marginTop: 2,
+    color: '#666666',
+    marginBottom: 8,
+  },
+  itemsList: {
+    marginTop: 4,
+  },
+  itemDetail: {
+    fontSize: 12,
+    color: '#666666',
+    marginBottom: 2,
   },
   orderItemPrice: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#0391C4',
   },
-  deliveryMethod: {
+  totalContainer: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
-    borderRadius: 10,
-    backgroundColor: '#F5F5F5',
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'transparent',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
   },
-  selectedDelivery: {
-    backgroundColor: '#E6F2FF',
-    borderColor: '#0391C4',
+  totalLabel: {
+    fontSize: 14,
+    color: '#666666',
   },
-  deliveryMethodContent: {
-    flex: 1,
-    marginLeft: 15,
+  totalAmount: {
+    fontSize: 16,
+    color: '#333333',
+    fontWeight: '600',
   },
   paymentMethod: {
     flexDirection: 'row',
@@ -383,16 +706,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
-  methodTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 2,
-  },
-  methodDescription: {
-    fontSize: 14,
-    color: '#666',
-  },
   radioButton: {
     width: 20,
     height: 20,
@@ -408,82 +721,70 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#0391C4',
   },
-  input: {
+  addressInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     backgroundColor: '#F5F5F5',
-    borderRadius: 10,
-    padding: 15,
-    fontSize: 14,
-    color: '#333',
-    minHeight: 100,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E0E0E0',
+    padding: 12,
   },
-  bottomContainer: {
-    backgroundColor: '#fff',
-    padding: 20,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 20,
-    borderTopWidth: 1,
-    borderTopColor: '#E6E6E6',
+  addressIcon: {
+    marginRight: 12,
+    marginTop: 4,
   },
-  priceContainer: {
+  addressInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#333333',
+    minHeight: 80,
+    textAlignVertical: 'top',
+    paddingTop: 0,
+  },
+  addressHelper: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 8,
+    marginLeft: 4,
+  },
+  deliveryFeeContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
   },
-  priceLabel: {
-    fontSize: 14,
-    color: '#666',
+  grandTotalContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    borderTopStyle: 'dashed',
   },
-  priceValue: {
+  grandTotalLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333333',
+  },
+  grandTotalAmount: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#0391C4',
   },
-  confirmButton: {
-    backgroundColor: '#0391C4',
-    borderRadius: 15,
-    padding: 18,
-    alignItems: 'center',
+  deliveryFeeText: {
+    fontSize: 12,
+    color: '#0391C4',
+    marginTop: 4,
   },
-  disabledButton: {
-    backgroundColor: '#B0E0FF',
-  },
-  confirmButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  mapContainer: {
-    height: 300,
-    marginBottom: 20,
-  },
-  map: {
-    flex: 1,
-    borderRadius: 10,
-  },
-  mapButton: {
-    backgroundColor: '#0391C4',
-    paddingVertical: 10,
-    borderRadius: 5,
-    marginTop: 10,
-  },
-  mapButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  closeMapButton: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    padding: 10,
-    borderRadius: 20,
-  },
-  closeMapButtonText: {
-    color: '#fff',
-    fontSize: 14,
+  deliveryFeeInfo: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 2,
   },
 });
 

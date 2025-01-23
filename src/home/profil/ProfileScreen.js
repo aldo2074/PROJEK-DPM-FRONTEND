@@ -17,7 +17,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'react-native-image-picker';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_URL } from '../../../backend/config/config';
+import { PROFILE_URL } from '../../../api';
 
 // MenuItem Komponen
 const MenuItem = ({ icon, text, onPress }) => (
@@ -33,7 +33,7 @@ const ProfileScreen = () => {
   const navigation = useNavigation();
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
-  const [language, setLanguage] = useState('id'); // Tambahkan inisialisasi `language`
+  const [language, setLanguage] = useState('id');
   const [profileData, setProfileData] = useState({
     username: '',
     email: '',
@@ -42,61 +42,162 @@ const ProfileScreen = () => {
     newPassword: '',
   });
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const token = await AsyncStorage.getItem('authToken');
-        const response = await axios.get(`${API_URL}/profile`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        const data = response.data;
-        setProfileData((prev) => ({
-          ...prev,
-          username: data.username,
-          email: data.email,
-          profileImage: data.profileImage || null,
-        }));
-      } catch (error) {
-        console.error('Error fetching profile:', error);
-        Alert.alert('Error', 'Gagal memuat profil');
+    const checkToken = async () => {
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        navigation.replace('Login');
       }
     };
-
+    
+    checkToken();
     fetchProfile();
   }, []);
+
+  const fetchProfile = async () => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      console.log('Token:', token);
+
+      if (!token) {
+        console.log('No token found');
+        navigation.replace('Login');
+        return;
+      }
+
+      // Decode token untuk cek expiry
+      const tokenParts = token.split('.');
+      if (tokenParts.length === 3) {
+        const payload = JSON.parse(atob(tokenParts[1]));
+        const currentTime = Math.floor(Date.now() / 1000);
+        
+        if (payload.exp && payload.exp < currentTime) {
+          console.log('Token expired');
+          await AsyncStorage.removeItem('authToken');
+          navigation.replace('Login');
+          return;
+        }
+      }
+
+      const response = await axios.get(PROFILE_URL, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log('Profile Response:', response.data);
+
+      if (response.data.success) {
+        setProfile(response.data.user);
+        setError(null);
+        setProfileData({
+          username: response.data.user.username || '',
+          email: response.data.user.email || '',
+          profileImage: response.data.user.profileImage || null,
+          oldPassword: '',
+          newPassword: '',
+        });
+      } else {
+        setError('Gagal memuat profil');
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        headers: error.config?.headers
+      });
+
+      if (error.response?.status === 401) {
+        await AsyncStorage.removeItem('authToken');
+        Alert.alert(
+          'Sesi Berakhir',
+          'Silakan login kembali',
+          [
+            {
+              text: 'OK',
+              onPress: () => navigation.replace('Login')
+            }
+          ]
+        );
+      } else {
+        setError('Gagal memuat profil');
+      }
+    }
+  };
 
   const handleSaveProfile = async () => {
     try {
       const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        navigation.replace('Login');
+        return;
+      }
+
       const formData = new FormData();
-      formData.append('username', profileData.username);
-      formData.append('email', profileData.email);
+      
+      // Only append if values exist and have changed
+      if (profileData.username) {
+        formData.append('username', profileData.username);
+      }
+      if (profileData.email) {
+        formData.append('email', profileData.email);
+      }
       if (profileData.newPassword) {
         formData.append('newPassword', profileData.newPassword);
       }
-      if (profileData.profileImage && profileData.profileImage.uri) {
-        formData.append('profileImage', {
+      
+      // Handle image upload
+      if (profileData.profileImage?.uri) {
+        const imageFile = {
           uri: profileData.profileImage.uri,
-          name: 'profile.jpg',
-          type: profileData.profileImage.type,
-        });
+          type: 'image/jpeg',
+          name: 'profile-image.jpg'
+        };
+        formData.append('profileImage', imageFile);
       }
 
-      await axios.put(`${API_URL}/profile`, formData, {
+      const response = await axios.put(PROFILE_URL, formData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 10000
       });
 
-      Alert.alert('Sukses', 'Profil berhasil diperbarui');
-      setEditModalVisible(false);
+      if (response.data.success) {
+        Alert.alert('Sukses', 'Profil berhasil diperbarui');
+        // Update local state with new data
+        setProfileData(prev => ({
+          ...prev,
+          ...response.data.user,
+          newPassword: '', // Clear password field
+        }));
+        setEditModalVisible(false);
+      }
     } catch (error) {
-      console.error('Error updating profile:', error);
-      Alert.alert('Error', 'Gagal memperbarui profil');
+      console.error('Error updating profile:', {
+        message: error.message,
+        response: error.response?.data
+      });
+
+      let errorMessage = 'Gagal memperbarui profil';
+      if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Koneksi timeout. Silakan coba lagi.';
+      } else if (error.message === 'Network Error') {
+        errorMessage = 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Sesi telah berakhir. Silakan login kembali.';
+        await AsyncStorage.removeItem('authToken');
+        navigation.replace('Login');
+      }
+
+      Alert.alert('Error', errorMessage);
     }
   };
 
@@ -218,6 +319,22 @@ const ProfileScreen = () => {
     </Modal>
   );
 
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>{error}</Text>
+      </View>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -229,13 +346,13 @@ const ProfileScreen = () => {
           <Image 
             source={
               profileData.profileImage
-                ? { uri: profileData.profileImage }
+                ? { uri: `${PROFILE_URL}/uploads/${profileData.profileImage}` }
                 : require('../../../assets/icons/default-profile.png')
             }
             style={styles.profileImage}
           />
-          <Text style={styles.profileName}>{profileData.username}</Text>
-          <Text style={styles.profileEmail}>{profileData.email}</Text>
+          <Text style={styles.profileName}>{profileData.username || 'Pengguna'}</Text>
+          <Text style={styles.profileEmail}>{profileData.email || 'Email tidak tersedia'}</Text>
         </View>
 
         <View style={styles.quickActions}>
@@ -306,9 +423,7 @@ const ProfileScreen = () => {
       {renderEditProfileModal()}
     </SafeAreaView>
   );
-  
 };
-
 
 const styles = StyleSheet.create({
   container: {
@@ -570,6 +685,16 @@ const styles = StyleSheet.create({
   activeNavIcon: {
     color: '#0391C4',
   },
+  errorText: {
+    color: 'red',
+    textAlign: 'center',
+    fontSize: 16,
+  },
+  loadingText: {
+    textAlign: 'center',
+    fontSize: 16,
+    color: '#666',
+  }
 });
 
 export default ProfileScreen;

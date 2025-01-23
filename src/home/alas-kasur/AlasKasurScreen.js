@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -10,15 +10,52 @@ import {
   Dimensions,
   SafeAreaView,
   Alert,
-  Platform
+  Platform,
+  BackHandler,
+  Modal,
+  ActivityIndicator
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { CART_URL } from '../../../api';
+import Toast from 'react-native-toast-message';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
-const AlasKasurScreen = () => {
-  const navigation = useNavigation();
+const AlasKasurScreen = ({ route, navigation }) => {
+  const params = route?.params || {};
+  
+  const {
+    editMode = false,
+    existingItems = [],
+    serviceId = null,
+    serviceName = 'Alas Kasur'
+  } = params;
+
+  const [quantities, setQuantities] = useState(() => {
+    if (editMode && existingItems?.length > 0) {
+      const initialQuantities = {
+        'Sprei': 0,
+        'Sarung Bantal': 0
+      };
+      existingItems.forEach(item => {
+        if (item?.name) {
+          initialQuantities[item.name] = item.quantity || 0;
+        }
+      });
+      return initialQuantities;
+    }
+    return {
+      'Sprei': 0,
+      'Sarung Bantal': 0
+    };
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [showExistingServiceModal, setShowExistingServiceModal] = useState(false);
 
   const alasKasurTypes = [
     { 
@@ -37,19 +74,51 @@ const AlasKasurScreen = () => {
     }
   ];
 
-  const [quantities, setQuantities] = useState({
-    'Sprei': 0,
-    'Sarung Bantal': 0
-  });
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress
+    );
+    return () => backHandler.remove();
+  }, [hasChanges]);
+
+  const handleBackPress = () => {
+    if (hasChanges) {
+      Alert.alert(
+        'Batalkan Perubahan?',
+        'Perubahan yang belum disimpan akan hilang',
+        [
+          { text: 'Tetap Disini', style: 'cancel' },
+          { 
+            text: 'Batalkan', 
+            style: 'destructive',
+            onPress: () => navigation.goBack()
+          }
+        ]
+      );
+      return true;
+    }
+    return false;
+  };
 
   const updateQuantity = (type, value) => {
-    setQuantities(prev => {
-      const newValue = typeof value === 'number' ? prev[type] + value : parseInt(value, 10) || 0;
-      return {
-        ...prev,
-        [type]: Math.max(0, newValue),
-      };
-    });
+    if (!type) return;
+
+    let newValue;
+    if (typeof value === 'string') {
+      newValue = value === '' ? 0 : parseInt(value) || 0;
+    } else {
+      newValue = quantities[type] + (value || 0);
+    }
+
+    // Validasi batas minimum dan maksimum
+    newValue = Math.max(0, Math.min(20, newValue));
+
+    setQuantities(prev => ({
+      ...prev,
+      [type]: newValue
+    }));
+    setHasChanges(true);
   };
 
   const calculateTotalPrice = () => {
@@ -64,53 +133,161 @@ const AlasKasurScreen = () => {
 
   const hasItems = Object.values(quantities).some(qty => qty > 0);
 
-  const handleOrder = () => {
-    const totalPrice = calculateTotalPrice();
-    if (totalPrice < 5000) {
-      Alert.alert(
-        'Pesanan Minimal',
-        'Total pembayaran harus minimal Rp 5.000. Silakan pilih lebih banyak item.',
-        [{ text: 'OK' }]
-      );
-    } else {
-      navigation.navigate('OrderConfirmation');
-    }
+  const handleReset = () => {
+    setQuantities({
+      'Sprei': 0,
+      'Sarung Bantal': 0
+    });
+    setHasChanges(false);
   };
 
-  const handleAddToCart = () => {
-    const totalPrice = calculateTotalPrice();
-    if (totalPrice < 5000) {
-      Alert.alert(
-        'Pesanan Minimal',
-        'Total pembayaran harus minimal Rp 5.000. Silakan pilih lebih banyak item.',
-        [{ text: 'OK' }]
-      );
-      return;
+  const handleSubmit = async () => {
+    try {
+        const selectedItems = Object.entries(quantities)
+            .filter(([_, quantity]) => quantity > 0)
+            .map(([name, quantity]) => ({
+                name,
+                quantity,
+                price: alasKasurTypes.find(type => type.name === name)?.price || 0
+            }));
+
+        if (selectedItems.length === 0) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Pilih minimal 1 item',
+                position: 'bottom'
+            });
+            return;
+        }
+
+        setIsLoading(true);
+        const token = await AsyncStorage.getItem('userToken');
+        
+        if (!token) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Sesi anda telah berakhir',
+                position: 'bottom'
+            });
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+            });
+            return;
+        }
+
+        const totalPrice = selectedItems.reduce(
+            (sum, item) => sum + (item.price * item.quantity), 
+            0
+        );
+
+        const cartData = {
+            service: 'Alas Kasur',
+            items: selectedItems,
+            totalPrice: totalPrice,
+            isEdit: editMode
+        };
+
+        console.log('Sending cart data:', cartData);
+        console.log('ServiceId:', params?.serviceId);
+        console.log('Edit mode:', editMode);
+
+        let response;
+        if (editMode && params?.serviceId) {
+            response = await axios.put(
+                `${CART_URL}/update/${params.serviceId}`,
+                cartData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+        } else {
+            response = await axios.post(
+                CART_URL,
+                cartData,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+        }
+
+        if (response.data.success) {
+            Toast.show({
+                type: 'success',
+                text1: 'Berhasil',
+                text2: editMode ? 'Layanan berhasil diperbarui' : 'Layanan berhasil ditambahkan',
+                position: 'bottom'
+            });
+
+            handleReset();
+            navigation.navigate('Cart', { 
+                refresh: true,
+                editSuccess: editMode 
+            });
+        }
+    } catch (error) {
+        console.error('Cart error:', error.response?.data || error);
+        
+        if (error.response?.status === 401) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Sesi anda telah berakhir',
+                position: 'bottom'
+            });
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+            });
+        } else if (error.response?.data?.existingService) {
+            setShowExistingServiceModal(true);
+        } else {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error.response?.data?.error || 'Gagal menambahkan ke keranjang',
+                position: 'bottom'
+            });
+        }
+    } finally {
+        setIsLoading(false);
     }
+};
 
-    const selectedItems = alasKasurTypes
-      .filter(type => quantities[type.name] > 0)
-      .map(type => ({
-        name: type.name,
-        quantity: quantities[type.name],
-        price: type.price,
-      }));
-
-      Alert.alert(
-        'Berhasil',
-        'Pesanan berhasil ditambahkan ke keranjang',
-        [
-          {
-            text: 'Lihat Keranjang',
-            onPress: () => navigation.navigate('Cart')
-          },
-          {
-            text: 'Lanjut Belanja',
-            style: 'cancel'
-          }
-        ]
-      );
-  };
+  const ExistingServiceModal = () => (
+    <Modal
+      animationType="fade"
+      transparent={true}
+      visible={showExistingServiceModal}
+      onRequestClose={() => setShowExistingServiceModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalIcon}>
+            <Icon name="info" size={40} color="#0391C4" />
+          </View>
+          <Text style={styles.modalTitle}>Layanan Sudah Ada</Text>
+          <Text style={styles.modalMessage}>
+            Layanan ini sudah ada di keranjang. Silakan edit layanan yang ada atau pilih layanan lain.
+          </Text>
+          <TouchableOpacity
+            style={styles.modalButton}
+            onPress={() => setShowExistingServiceModal(false)}
+          >
+            <Text style={styles.modalButtonText}>Mengerti</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -140,19 +317,17 @@ const AlasKasurScreen = () => {
           </View>
         </View>
 
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Pilih Jenis Alas Kasur</Text>
-          
+        <View style={styles.itemsContainer}>
           {alasKasurTypes.map((type) => (
-            <View key={type.id} style={styles.itemContainer}>
-              <View style={styles.itemLeft}>
-                <View style={styles.itemIconContainer}>
-                  <Image source={type.icon} style={styles.itemIcon} />
+            <View key={type.id} style={styles.clothingItemContainer}>
+              <View style={styles.clothingItemLeft}>
+                <View style={styles.clothingIconContainer}>
+                  <Image source={type.icon} style={styles.clothingIcon} />
                 </View>
-                <View style={styles.itemTextContainer}>
-                  <Text style={styles.itemName}>{type.name}</Text>
-                  <Text style={styles.itemDescription}>{type.description}</Text>
-                  <Text style={styles.itemPrice}>
+                <View style={styles.clothingTextContainer}>
+                  <Text style={styles.clothingName}>{type.name}</Text>
+                  <Text style={styles.clothingDescription}>{type.description}</Text>
+                  <Text style={styles.clothingPrice}>
                     Rp {type.price.toLocaleString()}/pcs
                   </Text>
                 </View>
@@ -160,21 +335,21 @@ const AlasKasurScreen = () => {
               
               <View style={styles.quantityContainer}>
                 <TouchableOpacity 
-                  style={[ 
-                    styles.quantityButton, 
-                    quantities[type.name] === 0 && styles.quantityButtonDisabled 
+                  style={[
+                    styles.quantityButton,
+                    quantities[type.name] === 0 && styles.quantityButtonDisabled
                   ]}
                   onPress={() => updateQuantity(type.name, -1)}
                 >
-                  <Text style={[ 
-                    styles.quantityButtonText, 
-                    quantities[type.name] === 0 && styles.quantityButtonTextDisabled 
+                  <Text style={[
+                    styles.quantityButtonText,
+                    quantities[type.name] === 0 && styles.quantityButtonTextDisabled
                   ]}>-</Text>
                 </TouchableOpacity>
                 
                 <TextInput 
                   style={styles.quantityInput}
-                  value={quantities[type.name].toString()}
+                  value={String(quantities[type.name] || 0)}
                   onChangeText={(text) => updateQuantity(type.name, text)}
                   keyboardType="numeric"
                 />
@@ -227,19 +402,35 @@ const AlasKasurScreen = () => {
         )}
       </ScrollView>
 
-      {hasItems && (
-        <View style={styles.bottomButtonsContainer}>                                    
+      {hasItems ? (
+        <View style={styles.bottomButtonsContainer}>
           <TouchableOpacity
-            style={styles.cartButton}
-            onPress={handleAddToCart}
+            style={styles.resetButton}
+            onPress={handleReset}
+            disabled={isLoading}
           >
-            <Icon name="shopping-cart" size={24} color="#0391C4" />
-            <Text style={styles.cartButtonText}>Masukkan Keranjang</Text>
+            <Icon name="refresh" size={20} color="#FF3B30" />
+            <Text style={styles.resetButtonText}>Reset</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.cartButton]}
+            onPress={handleSubmit}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#0391C4" />
+            ) : (
+              <>
+                <Icon name="shopping-cart" size={24} color="#0391C4" />
+                <Text style={styles.cartButtonText}>
+                  {editMode ? 'Simpan Perubahan' : 'Masukkan Keranjang'}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
-      )}
-
-      {!hasItems && (
+      ) : (
         <View style={styles.bottomButtonsContainer}>
           <TouchableOpacity 
             style={[styles.singleButton, styles.disabledButton]} 
@@ -247,6 +438,33 @@ const AlasKasurScreen = () => {
           >
             <Text style={styles.orderButtonText}>Pilih Item</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {showExistingServiceModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Icon name="error-outline" size={50} color="#FF3B30" />
+            <Text style={styles.modalTitle}>Layanan Sudah Ada</Text>
+            <Text style={styles.modalText}>
+              Anda sudah memiliki layanan ini di keranjang. Silakan selesaikan atau hapus layanan yang ada terlebih dahulu.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => {
+                setShowExistingServiceModal(false);
+                navigation.navigate('Cart');
+              }}
+            >
+              <Text style={styles.modalButtonText}>Lihat Keranjang</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondaryButton}
+              onPress={() => setShowExistingServiceModal(false)}
+            >
+              <Text style={styles.modalSecondaryButtonText}>Tutup</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </SafeAreaView>
@@ -316,16 +534,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
-  sectionContainer: {
+  itemsContainer: {
     marginBottom: 20,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-  },
-  itemContainer: {
+  clothingItemContainer: {
     backgroundColor: 'white',
     borderRadius: 15,
     padding: 15,
@@ -336,37 +548,37 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  itemLeft: {
+  clothingItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
   },
-  itemIconContainer: {
+  clothingIconContainer: {
     backgroundColor: '#E6F2FF',
     borderRadius: 15,
     padding: 12,
     marginRight: 15,
   },
-  itemIcon: {
+  clothingIcon: {
     width: 35,
     height: 35,
     resizeMode: 'contain',
   },
-  itemTextContainer: {
+  clothingTextContainer: {
     flex: 1,
   },
-  itemName: {
+  clothingName: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 2,
   },
-  itemDescription: {
+  clothingDescription: {
     fontSize: 13,
     color: '#666',
     marginBottom: 4,
   },
-  itemPrice: {
+  clothingPrice: {
     fontSize: 15,
     color: '#0391C4',
     fontWeight: '600',
@@ -468,48 +680,33 @@ const styles = StyleSheet.create({
     color: '#0391C4',
   },
   bottomButtonsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'white',
-    padding: 15,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 15,
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    flexDirection: 'column',
+    borderTopColor: '#E6E6E6',
     gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 10,
   },
-  orderButton: {
-    backgroundColor: '#0391C4',
-    borderRadius: 12,
-    paddingVertical: 14,
-    width: '100%',
-  },
-  orderButtonContent: {
-    width: '100%',
+  resetButton: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#FFE5E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
   },
-  orderButtonTextContainer: {
-    alignItems: 'center',
-  },
-  orderButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  orderButtonPrice: {
-    color: '#E6F2FF',
+  resetButtonText: {
+    color: '#FF3B30',
     fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
   },
   cartButton: {
+    flex: 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -526,12 +723,96 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   singleButton: {
+    flex: 1,
     borderRadius: 12,
     paddingVertical: 15,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   disabledButton: {
     backgroundColor: '#B0E0FF',
+  },
+  orderButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    width: '90%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalIcon: {
+    width: 80,
+    height: 80,
+    backgroundColor: '#E6F2FF',
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalButton: {
+    backgroundColor: '#0391C4',
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    width: '100%',
+  },
+  modalButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  modalText: {
+    color: '#666',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalSecondaryButton: {
+    backgroundColor: '#FF3B30',
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    width: '100%',
+  },
+  modalSecondaryButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });
 

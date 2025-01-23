@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -10,15 +10,54 @@ import {
   Dimensions,
   SafeAreaView,
   Alert,
-  Platform
+  Platform,
+  BackHandler,
+  Modal,
+  ActivityIndicator
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { CART_URL } from '../../../api';
+import Toast from 'react-native-toast-message';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
-const SetrikaScreen = () => {
-  const navigation = useNavigation();
+const SetrikaScreen = ({ route, navigation }) => {
+  const params = route?.params || {};
+  
+  const {
+    editMode = false,
+    existingItems = [],
+    serviceId = null,
+    serviceName = 'Setrika'
+  } = params;
+
+  const [quantities, setQuantities] = useState(() => {
+    if (editMode && existingItems?.length > 0) {
+      const initialQuantities = {
+        'Kaos': 0,
+        'Kemeja': 0,
+        'Celana': 0
+      };
+      existingItems.forEach(item => {
+        if (item?.name) {
+          initialQuantities[item.name] = item.quantity || 0;
+        }
+      });
+      return initialQuantities;
+    }
+    return {
+      'Kaos': 0,
+      'Kemeja': 0,
+      'Celana': 0
+    };
+  });
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [showExistingServiceModal, setShowExistingServiceModal] = useState(false);
 
   const clothingTypes = [
     { 
@@ -44,20 +83,24 @@ const SetrikaScreen = () => {
     }
   ];
 
-  const [quantities, setQuantities] = useState({
-    'Kaos': 0,
-    'Kemeja': 0,
-    'Celana': 0
-  });
-
   const updateQuantity = (type, value) => {
-    setQuantities(prev => {
-      const newValue = typeof value === 'number' ? prev[type] + value : parseInt(value, 10) || 0;
-      return {
-        ...prev,
-        [type]: Math.max(0, newValue),
-      };
-    });
+    if (!type) return;
+
+    let newValue;
+    if (typeof value === 'string') {
+      newValue = value === '' ? 0 : parseInt(value) || 0;
+    } else {
+      newValue = quantities[type] + (value || 0);
+    }
+
+    // Validasi batas minimum dan maksimum
+    newValue = Math.max(0, Math.min(20, newValue));
+
+    setQuantities(prev => ({
+      ...prev,
+      [type]: newValue
+    }));
+    setHasChanges(true);
   };
 
   const calculateTotalPrice = () => {
@@ -72,52 +115,161 @@ const SetrikaScreen = () => {
 
   const hasItems = Object.values(quantities).some(qty => qty > 0);
 
-  const handleOrder = () => {
-    const totalPrice = calculateTotalPrice();
-    if (totalPrice < 2500) {
+  // Prevent accidental back navigation
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress
+    );
+    return () => backHandler.remove();
+  }, [hasChanges]);
+
+  const handleBackPress = () => {
+    if (hasChanges) {
       Alert.alert(
-        'Pesanan Minimal',
-        'Total pembayaran harus minimal Rp 2.500. Silakan pilih lebih banyak pakaian.',
-        [{ text: 'OK' }]
+        'Batalkan Perubahan?',
+        'Perubahan yang belum disimpan akan hilang',
+        [
+          { text: 'Tetap Disini', style: 'cancel' },
+          { 
+            text: 'Batalkan', 
+            style: 'destructive',
+            onPress: () => navigation.goBack()
+          }
+        ]
       );
-    } else {
-      navigation.navigate('OrderConfirmation');
+      return true;
     }
+    return false;
   };
 
-  const handleAddToCart = () => {
-    const totalPrice = calculateTotalPrice();
-    if (totalPrice < 2500) {
-      Alert.alert(
-        'Pesanan Minimal',
-        'Total pembayaran harus minimal Rp 2.500. Silakan pilih lebih banyak pakaian.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+  const handleReset = () => {
+    setQuantities({
+      'Kaos': 0,
+      'Kemeja': 0,
+      'Celana': 0
+    });
+    setHasChanges(false);
+  };
 
-    const selectedItems = clothingTypes
-      .filter(type => quantities[type.name] > 0)
-      .map(type => ({
-        name: type.name,
-        quantity: quantities[type.name],
-        price: type.price,
-      }));
+  const handleSubmit = async () => {
+    try {
+        const selectedItems = Object.entries(quantities)
+            .filter(([_, quantity]) => quantity > 0)
+            .map(([name, quantity]) => ({
+                name,
+                quantity,
+                price: clothingTypes.find(type => type.name === name)?.price || 0
+            }));
 
-    Alert.alert(
-      'Berhasil',
-      'Pesanan berhasil ditambahkan ke keranjang',
-      [
-        {
-          text: 'Lihat Keranjang',
-          onPress: () => navigation.navigate('Cart')
-        },
-        {
-          text: 'Lanjut Belanja',
-          style: 'cancel'
+        if (selectedItems.length === 0) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Pilih minimal 1 item',
+                position: 'bottom'
+            });
+            return;
         }
-      ]
-    );
+
+        const totalItems = selectedItems.reduce((sum, item) => sum + item.quantity, 0);
+        if (totalItems > 50) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Maksimum 50 item per layanan',
+                position: 'bottom'
+            });
+            return;
+        }
+
+        setIsLoading(true);
+        const token = await AsyncStorage.getItem('userToken');
+        
+        if (!token) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Sesi anda telah berakhir',
+                position: 'bottom'
+            });
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+            });
+            return;
+        }
+
+        const totalPrice = selectedItems.reduce(
+            (sum, item) => sum + (item.price * item.quantity), 
+            0
+        );
+
+        const cartData = {
+            service: 'Setrika',
+            items: selectedItems.map(item => ({
+                name: item.name,
+                quantity: parseInt(item.quantity),
+                price: parseFloat(item.price)
+            })),
+            totalPrice: parseFloat(totalPrice),
+            serviceId: params?.serviceId || null,
+            isEdit: Boolean(editMode)
+        };
+
+        console.log('Sending cart data:', cartData);
+
+        const response = await axios.post(CART_URL, cartData, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        console.log('Cart response:', response.data);
+
+        if (response.data.success) {
+            Toast.show({
+                type: 'success',
+                text1: 'Berhasil',
+                text2: editMode ? 'Layanan berhasil diperbarui' : 'Layanan berhasil ditambahkan',
+                position: 'bottom'
+            });
+
+            handleReset();
+            navigation.navigate('Cart', { refresh: true });
+        }
+    } catch (error) {
+        if (error.response?.data) {
+            console.log('Server response:', error.response.data);
+        } else {
+            console.log('Error:', error.message);
+        }
+        
+        if (error.response?.status === 401) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Sesi anda telah berakhir',
+                position: 'bottom'
+            });
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+            });
+        } else if (error.response?.data?.existingService) {
+            setShowExistingServiceModal(true);
+        } else {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error.response?.data?.error || 'Gagal menambahkan ke keranjang',
+                position: 'bottom'
+            });
+        }
+    } finally {
+        setIsLoading(false);
+    }
   };
 
   return (
@@ -235,19 +387,35 @@ const SetrikaScreen = () => {
         )}
       </ScrollView>
 
-      {hasItems && (
+      {hasItems ? (
         <View style={styles.bottomButtonsContainer}>
           <TouchableOpacity
-            style={styles.cartButton}
-            onPress={handleAddToCart}
+            style={styles.resetButton}
+            onPress={handleReset}
+            disabled={isLoading}
           >
-            <Icon name="shopping-cart" size={24} color="#0391C4" />
-            <Text style={styles.cartButtonText}>Masukkan Keranjang</Text>
+            <Icon name="refresh" size={20} color="#FF3B30" />
+            <Text style={styles.resetButtonText}>Reset</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[styles.cartButton]}
+            onPress={handleSubmit}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#0391C4" />
+            ) : (
+              <>
+                <Icon name="shopping-cart" size={24} color="#0391C4" />
+                <Text style={styles.cartButtonText}>
+                  {editMode ? 'Simpan Perubahan' : 'Masukkan Keranjang'}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
-      )}
-
-      {!hasItems && (
+      ) : (
         <View style={styles.bottomButtonsContainer}>
           <TouchableOpacity 
             style={[styles.singleButton, styles.disabledButton]} 
@@ -255,6 +423,33 @@ const SetrikaScreen = () => {
           >
             <Text style={styles.orderButtonText}>Pilih Pakaian</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {showExistingServiceModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Icon name="error-outline" size={50} color="#FF3B30" />
+            <Text style={styles.modalTitle}>Layanan Sudah Ada</Text>
+            <Text style={styles.modalText}>
+              Anda sudah memiliki layanan ini di keranjang. Silakan selesaikan atau hapus layanan yang ada terlebih dahulu.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => {
+                setShowExistingServiceModal(false);
+                navigation.navigate('Cart');
+              }}
+            >
+              <Text style={styles.modalButtonText}>Lihat Keranjang</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSecondaryButton}
+              onPress={() => setShowExistingServiceModal(false)}
+            >
+              <Text style={styles.modalSecondaryButtonText}>Tutup</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </SafeAreaView>
@@ -476,48 +671,33 @@ const styles = StyleSheet.create({
     color: '#0391C4',
   },
   bottomButtonsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'white',
-    padding: 15,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 15,
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    flexDirection: 'column',
+    borderTopColor: '#E6E6E6',
     gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 10,
   },
-  orderButton: {
-    backgroundColor: '#0391C4',
-    borderRadius: 12,
-    paddingVertical: 14,
-    width: '100%',
-  },
-  orderButtonContent: {
-    width: '100%',
+  resetButton: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#FFE5E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
   },
-  orderButtonTextContainer: {
-    alignItems: 'center',
-  },
-  orderButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  orderButtonPrice: {
-    color: '#E6F2FF',
+  resetButtonText: {
+    color: '#FF3B30',
     fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
   },
   cartButton: {
+    flex: 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -534,12 +714,85 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   singleButton: {
+    flex: 1,
     borderRadius: 12,
     paddingVertical: 15,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   disabledButton: {
     backgroundColor: '#B0E0FF',
+  },
+  orderButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 20,
+    width: '85%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  modalText: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  modalButton: {
+    backgroundColor: '#0391C4',
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  modalButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalSecondaryButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalSecondaryButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });
 

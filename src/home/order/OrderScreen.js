@@ -1,40 +1,111 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
+  Alert
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ORDER_URL } from '../../../api';
 
-const OrderScreen = () => {
+const OrderScreen = ({ route }) => {
   const navigation = useNavigation();
+  const [orders, setOrders] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Sample data for active orders
-  const activeOrders = [
-    {
-      id: '1',
-      service: 'Cuci & Setrika',
-      status: 'Dalam Proses',
-      date: '14 Dec 2024',
-      items: '4 pcs',
-      price: 'Rp 50.000',
-      estimatedDone: '16 Dec 2024',
-      iconName: 'local-laundry-service',
-    },
-    {
-      id: '2',
-      service: 'Setrika',
-      status: 'Menunggu Pickup',
-      date: '14 Dec 2024',
-      items: '2 kg',
-      price: 'Rp 30.000',
-      estimatedDone: '15 Dec 2024',
-      iconName: 'iron',
-    },
-  ];
+  // Fetch orders when screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchOrders();
+    }, [])
+  );
+
+  // Handle new order data from OrderConfirmationScreen
+  useFocusEffect(
+    React.useCallback(() => {
+      if (route.params?.orderData) {
+        const newOrder = {
+          ...route.params.orderData,
+          _id: Date.now().toString(), // Generate temporary ID
+          orderNumber: generateOrderNumber(),
+          status: 'Dalam Proses',
+          createdAt: new Date().toISOString()
+        };
+        
+        // Add new order to the beginning of the list
+        setOrders(prevOrders => [newOrder, ...prevOrders]);
+        
+        // Clear the route params
+        navigation.setParams({ orderData: null });
+      }
+    }, [route.params?.orderData])
+  );
+
+  const fetchOrders = async () => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+        return;
+      }
+
+      const response = await axios.get(ORDER_URL, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.data.success) {
+        setOrders(response.data.orders);
+      }
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      if (error.response?.status === 401) {
+        await AsyncStorage.removeItem('userToken');
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+      } else {
+        Alert.alert('Error', 'Gagal mengambil data pesanan');
+      }
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const onRefresh = React.useCallback(() => {
+    setRefreshing(true);
+    fetchOrders();
+  }, []);
+
+  // Generate unique order number
+  const generateOrderNumber = () => {
+    const timestamp = Date.now().toString();
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `ORD${timestamp}${random}`;
+  };
+
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -42,49 +113,77 @@ const OrderScreen = () => {
         return '#FF9800';
       case 'Menunggu Pickup':
         return '#2196F3';
+      case 'Selesai':
+        return '#4CAF50';
+      case 'Dibatalkan':
+        return '#F44336';
       default:
         return '#999';
     }
   };
 
-  const OrderCard = ({ order }) => (
-    <TouchableOpacity
-      style={styles.orderCard}
-      onPress={() => {}}
-    >
-      <View style={styles.orderHeader}>
-        <View style={styles.serviceInfo}>
-          <View style={styles.iconContainer}>
-            <Icon name={order.iconName} size={24} color="#0391C4" />
-          </View>
-          <View>
-            <Text style={styles.serviceName}>{order.service}</Text>
-            <Text style={styles.orderDate}>{order.date}</Text>
-          </View>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
-          <Text style={styles.statusText}>{order.status}</Text>
-        </View>
-      </View>
+  const OrderCard = ({ order }) => {
+    // Calculate total items
+    const totalItems = order.items.reduce((sum, service) => 
+      sum + service.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0
+    );
 
-      <View style={styles.orderDivider} />
+    return (
+      <TouchableOpacity
+        style={styles.orderCard}
+        onPress={() => {}}
+      >
+        <View style={styles.orderHeader}>
+          <View style={styles.serviceInfo}>
+            <View style={styles.iconContainer}>
+              <Icon name="local-laundry-service" size={24} color="#0391C4" />
+            </View>
+            <View>
+              <Text style={styles.serviceName}>Order #{order.orderNumber}</Text>
+              <Text style={styles.orderDate}>{formatDate(order.createdAt)}</Text>
+            </View>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) }]}>
+            <Text style={styles.statusText}>{order.status}</Text>
+          </View>
+        </View>
 
-      <View style={styles.orderDetails}>
-        <View style={styles.detailItem}>
-          <Icon name="local-laundry-service" size={20} color="#666" />
-          <Text style={styles.detailText}>{order.items}</Text>
+        <View style={styles.orderDivider} />
+
+        <View style={styles.orderDetails}>
+          <View style={styles.detailItem}>
+            <Icon name="local-laundry-service" size={20} color="#666" />
+            <Text style={styles.detailText}>{totalItems} items</Text>
+          </View>
+          <View style={styles.detailItem}>
+            <Icon name="attach-money" size={20} color="#666" />
+            <Text style={styles.detailText}>Rp {order.totalAmount.toLocaleString()}</Text>
+          </View>
+          <View style={styles.detailItem}>
+            <Icon name="access-time" size={20} color="#666" />
+            <Text style={styles.detailText}>
+              Selesai: {formatDate(order.estimatedDoneDate)}
+            </Text>
+          </View>
         </View>
-        <View style={styles.detailItem}>
-          <Icon name="attach-money" size={20} color="#666" />
-          <Text style={styles.detailText}>{order.price}</Text>
-        </View>
-        <View style={styles.detailItem}>
-          <Icon name="access-time" size={20} color="#666" />
-          <Text style={styles.detailText}>Selesai: {order.estimatedDone}</Text>
-        </View>
+
+        {order.deliveryMethod === 'pickup' && (
+          <View style={styles.deliveryInfo}>
+            <Icon name="local-shipping" size={20} color="#666" />
+            <Text style={styles.deliveryText}>Jemput & Antar</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0391C4" />
       </View>
-    </TouchableOpacity>
-  );
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -95,10 +194,17 @@ const OrderScreen = () => {
       <ScrollView 
         style={styles.contentContainer}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#0391C4']}
+          />
+        }
       >
-        {activeOrders.length > 0 ? (
-          activeOrders.map(order => (
-            <OrderCard key={order.id} order={order} />
+        {orders.length > 0 ? (
+          orders.map(order => (
+            <OrderCard key={order._id} order={order} />
           ))
         ) : (
           <View style={styles.emptyContainer}>
@@ -261,6 +367,25 @@ const styles = StyleSheet.create({
   activeNavIcon: {
     color: '#0391C4',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F7F9FC',
+  },
+  deliveryInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  deliveryText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#666',
+  }
 });
 
 export default OrderScreen;
