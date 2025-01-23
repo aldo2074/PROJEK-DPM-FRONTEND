@@ -25,6 +25,7 @@ import AdminScreen from './src/Admin/AdminScreen';
 import RegistrationSuccessScreen from './src/screens/RegistrationSuccessScreen';
 import CartScreen from './src/home/cart/CartScreen';
 import LupaSandiScreen from './src/screens/LupaSandiScreen';
+import OrderDetailScreen from './src/home/order/OrderDetailScreen';
 
 const Stack = createStackNavigator();
 
@@ -269,6 +270,17 @@ export default function App() {
               headerTitleContainerStyle: {
                 paddingLeft: Platform.OS === 'ios' ? 0 : -16,
               }
+            }}
+          />
+
+          {/* Add OrderDetail Screen */}
+          <Stack.Screen
+            name="OrderDetail"
+            component={OrderDetailScreen}
+            options={{
+              title: 'Detail Pesanan',
+              headerShown: false,
+              gestureEnabled: true,
             }}
           />
         </Stack.Navigator>

@@ -149,20 +149,15 @@ const OrderConfirmationScreen = ({ route }) => {
 
     try {
       const currentToken = await AsyncStorage.getItem('userToken');
-      console.log('Token for order:', currentToken);
-      console.log('Cart Items:', cartItems); // Debug cartItems
-
+      
       if (!currentToken) {
         handleSessionExpired('Token tidak ditemukan');
         return;
       }
 
-      // Validate cart items first
-      if (!cartItems || cartItems.length === 0) {
-        Alert.alert('Error', 'Keranjang belanja kosong');
-        setIsLoading(false);
-        return;
-      }
+      // Calculate estimated completion date (3 days from now)
+      const estimatedDoneDate = new Date();
+      estimatedDoneDate.setDate(estimatedDoneDate.getDate() + 3);
 
       // Prepare order data
       const orderData = {
@@ -171,7 +166,7 @@ const OrderConfirmationScreen = ({ route }) => {
           items: service.items.map(item => ({
             name: item.name,
             quantity: item.quantity,
-            price: item.price || 0
+            price: item.price
           })),
           totalPrice: service.totalPrice
         })),
@@ -181,10 +176,12 @@ const OrderConfirmationScreen = ({ route }) => {
         deliveryMethod,
         deliveryAddress: deliveryMethod === 'pickup' ? address : '',
         paymentMethod: selectedPayment,
-        notes: note || ''
+        notes: note || '',
+        estimatedDoneDate
       };
 
-      console.log('Sending order data:', JSON.stringify(orderData, null, 2)); // Pretty print order data
+      // Add logging for debugging
+      console.log('Sending order data:', JSON.stringify(orderData, null, 2));
 
       const response = await axios.post(
         `${ORDER_URL}/create`,
@@ -197,36 +194,30 @@ const OrderConfirmationScreen = ({ route }) => {
         }
       );
 
-      console.log('Order response:', response.data);
-
       if (response.data.success) {
-        // Clear cart data
+        // Clear cart data after successful order
         await AsyncStorage.removeItem('cartData');
         
-        // Navigate to success screen with order details
+        // Navigate to success screen
         navigation.replace('OrderSuccess', {
           orderNumber: response.data.order.orderNumber,
           totalAmount: response.data.order.totalAmount,
           deliveryMethod: response.data.order.deliveryMethod,
           estimatedDoneDate: response.data.order.estimatedDoneDate,
-          items: response.data.order.items
+          items: response.data.order.items,
+          status: response.data.order.status
         });
-      } else {
-        throw new Error(response.data.error || 'Gagal membuat pesanan');
       }
 
     } catch (error) {
-      console.error('Error creating order:', error.response?.data || error);
+      console.error('Error creating order:', error);
+      console.error('Error response:', error.response?.data);
       
       const errorMessage = error.response?.data?.error || 
-                         error.message || 
-                         'Terjadi kesalahan saat memproses pesanan';
+                          error.message || 
+                          'Terjadi kesalahan saat memproses pesanan';
       
-      Alert.alert(
-        'Error',
-        errorMessage,
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Error', errorMessage);
     } finally {
       setIsLoading(false);
     }

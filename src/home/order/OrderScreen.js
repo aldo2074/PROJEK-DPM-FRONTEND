@@ -122,8 +122,11 @@ const OrderScreen = ({ route }) => {
     }
   };
 
+  const navigateToOrderDetail = (order) => {
+    navigation.navigate('OrderDetail', { order });
+  };
+
   const OrderCard = ({ order }) => {
-    // Calculate total items
     const totalItems = order.items.reduce((sum, service) => 
       sum + service.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0
     );
@@ -131,7 +134,7 @@ const OrderScreen = ({ route }) => {
     return (
       <TouchableOpacity
         style={styles.orderCard}
-        onPress={() => {}}
+        onPress={() => navigateToOrderDetail(order)}
       >
         <View style={styles.orderHeader}>
           <View style={styles.serviceInfo}>
