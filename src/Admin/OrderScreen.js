@@ -70,17 +70,42 @@ const OrderScreen = () => {
     }
   };
 
+  const getStatusColor = (status) => {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return '#FFA500';
+      case 'processing':
+        return '#0391C4';
+      case 'completed':
+        return '#4CAF50';
+      default:
+        return '#666';
+    }
+  };
+
   const renderOrderItem = ({ item }) => (
     <View style={styles.orderCard}>
       <View style={styles.orderHeader}>
-        <Text style={styles.orderId}>Order #{item.orderId}</Text>
+        <View style={styles.orderIdContainer}>
+          <Text style={styles.orderId}>Order #{item.orderId}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+            <Text style={styles.statusText}>{item.status}</Text>
+          </View>
+        </View>
         <Text style={styles.orderDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
       </View>
 
+      <View style={styles.divider} />
+
       <View style={styles.orderDetails}>
-        <Text style={styles.customerName}>Customer: {item.userName}</Text>
-        <Text style={styles.serviceType}>Layanan: {item.serviceName}</Text>
-        <Text style={styles.orderStatus}>Status: {item.status}</Text>
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Customer</Text>
+          <Text style={styles.detailValue}>{item.userName}</Text>
+        </View>
+        <View style={styles.detailRow}>
+          <Text style={styles.detailLabel}>Layanan</Text>
+          <Text style={styles.detailValue}>{item.serviceName}</Text>
+        </View>
       </View>
 
       {item.status !== 'completed' && (
@@ -105,12 +130,15 @@ const OrderScreen = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.headerTitle}>Daftar Pesanan</Text>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Daftar Pesanan</Text>
+      </View>
       <FlatList
         data={orders}
         renderItem={renderOrderItem}
         keyExtractor={(item) => item.orderId.toString()}
         contentContainerStyle={styles.listContainer}
+        showsVerticalScrollIndicator={false}
       />
       <Toast />
     </View>
@@ -122,14 +150,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F7F9FC',
   },
+  header: {
+    backgroundColor: '#0391C4',
+    padding: 16,
+    paddingTop: 50,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    elevation: 4,
+  },
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    padding: 16,
-    color: '#333',
+    color: '#FFF',
+    textAlign: 'center',
   },
   listContainer: {
     padding: 16,
+    paddingTop: 8,
   },
   orderCard: {
     backgroundColor: '#FFF',
@@ -137,44 +174,77 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
     elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
+  },
+  orderIdContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   orderId: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#0391C4',
+    color: '#333',
+    marginRight: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
   orderDate: {
     color: '#666',
+    fontSize: 13,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#E0E0E0',
+    marginVertical: 12,
   },
   orderDetails: {
-    marginBottom: 12,
+    gap: 8,
   },
-  customerName: {
-    fontSize: 15,
-    marginBottom: 4,
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  serviceType: {
-    fontSize: 15,
-    marginBottom: 4,
-  },
-  orderStatus: {
-    fontSize: 15,
+  detailLabel: {
+    fontSize: 14,
     color: '#666',
+    flex: 1,
+  },
+  detailValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    flex: 2,
+    textAlign: 'right',
   },
   completeButton: {
     backgroundColor: '#0391C4',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    marginTop: 16,
   },
   completeButtonText: {
     color: '#FFF',
-    fontWeight: 'bold',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });
 

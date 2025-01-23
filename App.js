@@ -16,7 +16,7 @@ import SetrikaScreen from './src/home/setrika/SetrikaScreen';
 import AlasKasurScreen from './src/home/alas-kasur/AlasKasurScreen';
 import CuciSepatuScreen from './src/home/cuci-sepatu/CuciSepatuScreen';
 import ChatScreen from './src/home/chat/ChatScreen';
-import RiwayatScreen from './src/home/profil/Riwayat/RiwayatScreen';
+import RiwayatScreen from './src/home/profil/RiwayatScreen';
 import OrderScreen from './src/home/order/OrderScreen';
 import NotificationScreen from './src/home/notification/NotificationScreen';
 import OrderConfirmationScreen from './src/home/order/OrderConfirmationScreen';
@@ -26,6 +26,9 @@ import RegistrationSuccessScreen from './src/screens/RegistrationSuccessScreen';
 import CartScreen from './src/home/cart/CartScreen';
 import LupaSandiScreen from './src/screens/LupaSandiScreen';
 import OrderDetailScreen from './src/home/order/OrderDetailScreen';
+import EditProfileScreen from './src/home/profil/EditProfileScreen';
+import ChangePasswordScreen from './src/home/profil/ChangePasswordScreen';
+import AboutAppScreen from './src/home/profil/AboutAppScreen';
 
 const Stack = createStackNavigator();
 
@@ -282,6 +285,28 @@ export default function App() {
               headerShown: false,
               gestureEnabled: true,
             }}
+          />
+
+          <Stack.Screen
+            name="EditProfile"
+            component={EditProfileScreen}
+            options={{ headerShown: false }}
+          />
+          
+          <Stack.Screen
+            name="ChangePassword"
+            component={ChangePasswordScreen}
+            options={{ headerShown: false }}
+          />
+          
+          <Stack.Screen
+            name="About"
+            component={AboutAppScreen}
+            options={({ route }) => ({
+              headerShown: false,
+              title: route.params?.name || 'Tentang Aplikasi',
+              gestureEnabled: true
+            })}
           />
         </Stack.Navigator>
       </NavigationContainer>

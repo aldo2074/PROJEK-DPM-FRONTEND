@@ -11,6 +11,8 @@ import {
   TextInput,
   SafeAreaView,
   Alert,
+  StatusBar,
+  Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
@@ -19,13 +21,20 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PROFILE_URL } from '../../../api';
 
-// MenuItem Komponen
+// MenuItem Component dengan desain yang lebih baik
 const MenuItem = ({ icon, text, onPress }) => (
-  <TouchableOpacity style={styles.menuItem} onPress={onPress}>
-    <View style={styles.menuIconContainer}>
-      <Icon name={icon} size={24} color="#0391C4" />
+  <TouchableOpacity 
+    style={styles.menuItem} 
+    onPress={onPress}
+    activeOpacity={0.7}
+  >
+    <View style={styles.menuContent}>
+      <View style={styles.menuIconContainer}>
+        <Icon name={icon} size={24} color="#0391C4" />
+      </View>
+      <Text style={styles.menuText}>{text}</Text>
     </View>
-    <Text style={styles.menuText}>{text}</Text>
+    <Icon name="chevron-right" size={24} color="#CCCCCC" />
   </TouchableOpacity>
 );
 
@@ -36,19 +45,14 @@ const ProfileScreen = () => {
     username: '',
     email: '',
     profileImage: null,
-    oldPassword: '',
-    newPassword: '',
   });
-  const [showNewPassword, setShowNewPassword] = useState(false);
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
-  const [notifications, setNotifications] = useState(true);
-  const [isVerified, setIsVerified] = useState(false);
 
   useEffect(() => {
     const checkToken = async () => {
       try {
-        const token = await AsyncStorage.getItem('authToken');
+        const token = await AsyncStorage.getItem('userToken');
         console.log('Current token in ProfileScreen:', token);
         
         if (!token) {
@@ -64,6 +68,7 @@ const ProfileScreen = () => {
         await fetchProfile();
       } catch (error) {
         console.error('Error in checkToken:', error);
+        handleError(error);
       }
     };
     
@@ -72,7 +77,7 @@ const ProfileScreen = () => {
 
   const fetchProfile = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('userToken');
       console.log('Token:', token);
 
       if (!token) {
@@ -95,8 +100,6 @@ const ProfileScreen = () => {
           username: response.data.user.username || '',
           email: response.data.user.email || '',
           profileImage: response.data.user.profileImage || null,
-          oldPassword: '',
-          newPassword: '',
         });
       }
     } catch (error) {
@@ -107,7 +110,7 @@ const ProfileScreen = () => {
 
   const handleError = async (error) => {
     if (error.response?.status === 401) {
-      await AsyncStorage.removeItem('authToken');
+      await AsyncStorage.removeItem('userToken');
       Alert.alert(
         'Sesi Berakhir',
         'Silakan login kembali',
@@ -120,7 +123,7 @@ const ProfileScreen = () => {
 
   const handleSaveProfile = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await AsyncStorage.getItem('userToken');
       if (!token) {
         navigation.replace('Login');
         return;
@@ -134,9 +137,6 @@ const ProfileScreen = () => {
       }
       if (profileData.email) {
         formData.append('email', profileData.email);
-      }
-      if (profileData.newPassword) {
-        formData.append('newPassword', profileData.newPassword);
       }
       
       // Handle image upload
@@ -163,7 +163,6 @@ const ProfileScreen = () => {
         setProfileData(prev => ({
           ...prev,
           ...response.data.user,
-          newPassword: '', // Clear password field
         }));
         setEditModalVisible(false);
       }
@@ -180,7 +179,7 @@ const ProfileScreen = () => {
         errorMessage = 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
       } else if (error.response?.status === 401) {
         errorMessage = 'Sesi telah berakhir. Silakan login kembali.';
-        await AsyncStorage.removeItem('authToken');
+        await AsyncStorage.removeItem('userToken');
         navigation.replace('Login');
       }
 
@@ -212,19 +211,14 @@ const ProfileScreen = () => {
     }
   };
 
-  const handleVerifyAccount = async () => {
+  const handleLogout = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      const response = await axios.post(`${PROFILE_URL}/verify`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      if (response.data.success) {
-        setIsVerified(true);
-        Alert.alert('Sukses', 'Email verifikasi telah dikirim ke email Anda');
-      }
+      await AsyncStorage.removeItem('userToken');
+      delete axios.defaults.headers.common['Authorization'];
+      navigation.replace('Login');
     } catch (error) {
-      Alert.alert('Error', 'Gagal mengirim email verifikasi');
+      console.error('Error during logout:', error);
+      Alert.alert('Error', 'Gagal keluar dari aplikasi');
     }
   };
 
@@ -281,34 +275,6 @@ const ProfileScreen = () => {
                 </View>
               ))}
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Password Baru</Text>
-                <View style={styles.passwordContainer}>
-                  <TextInput
-                    style={[styles.input, styles.passwordInput]}
-                    secureTextEntry={!showNewPassword}
-                    value={profileData.newPassword}
-                    onChangeText={(text) =>
-                      setProfileData((prev) => ({
-                        ...prev,
-                        newPassword: text,
-                      }))
-                    }
-                  />
-                  <TouchableOpacity
-                    onPress={() => setShowNewPassword(!showNewPassword)}
-                  >
-                    <Icon
-                      name={
-                        showNewPassword ? 'visibility' : 'visibility-off'
-                      }
-                      size={24}
-                      color="#666"
-                    />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
               <TouchableOpacity 
                 style={styles.saveButton}
                 onPress={handleSaveProfile}
@@ -339,184 +305,257 @@ const ProfileScreen = () => {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Profil</Text>
+    <View style={styles.container}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      
+      {/* Header with Profile Info */}
+      <View style={styles.headerBackground}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Profil Saya</Text>
+          <View style={styles.profileInfo}>
+            <Image 
+              source={
+                profileData.profileImage
+                  ? { uri: `${PROFILE_URL}/${profileData.profileImage}` }
+                  : require('../../../assets/icons/default-profile.png')
+              }
+              style={styles.profileImage}
+            />
+            <View style={styles.profileTextContainer}>
+              <Text style={styles.profileName}>{profileData.username || 'Pengguna'}</Text>
+              <Text style={styles.profileEmail}>{profileData.email || 'Email tidak tersedia'}</Text>
+            </View>
+          </View>
+        </View>
       </View>
 
-      <ScrollView style={styles.content}>
-        <View style={styles.profileSection}>
-          <Image 
-            source={
-              profileData.profileImage
-                ? { uri: `${PROFILE_URL}/${profileData.profileImage}` }
-                : require('../../../assets/icons/default-profile.png')
-            }
-            style={styles.profileImage}
-          />
-          <Text style={styles.profileName}>{profileData.username || 'Pengguna'}</Text>
-          <Text style={styles.profileEmail}>{profileData.email || 'Email tidak tersedia'}</Text>
-          {!isVerified && (
-            <TouchableOpacity 
-              style={styles.verifyButton}
-              onPress={handleVerifyAccount}
-            >
-              <Icon name="verified-user" size={20} color="#0391C4" />
-              <Text style={styles.verifyText}>Verifikasi Akun</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.settingsSection}>
-          <Text style={styles.sectionTitle}>Pengaturan</Text>
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Menu Section */}
+        <View style={styles.menuSection}>
+          <Text style={styles.sectionTitle}>Pengaturan Akun</Text>
           
-          {/* Notifikasi Toggle */}
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Icon name="notifications" size={24} color="#0391C4" />
-              <Text style={styles.settingText}>Notifikasi</Text>
-            </View>
-            <Switch
-              value={notifications}
-              onValueChange={setNotifications}
-              trackColor={{ false: '#767577', true: '#0391C4' }}
-              thumbColor={notifications ? '#fff' : '#f4f3f4'}
-            />
-          </View>
-
-          {/* Menu Items */}
           <MenuItem
-            icon="person"
+            icon="person-outline"
             text="Edit Profil"
             onPress={() => setEditModalVisible(true)}
           />
           <MenuItem
+            icon="lock-outline"
+            text="Ubah Kata Sandi"
+            onPress={() => navigation.navigate('ChangePassword')}
+          />
+          <MenuItem
             icon="history"
-            text="Riwayat"
+            text="Riwayat Pesanan"
             onPress={() => navigation.navigate('Riwayat')}
           />
           <MenuItem
-            icon="security"
-            text="Keamanan"
-            onPress={() => navigation.navigate('Security')}
-          />
-          <MenuItem
-            icon="help"
-            text="Bantuan"
-            onPress={() => navigation.navigate('Help')}
-          />
-          <MenuItem
-            icon="info"
+            icon="info-outline"
             text="Tentang Aplikasi"
             onPress={() => navigation.navigate('About')}
           />
         </View>
 
+        {/* Logout Button */}
         <TouchableOpacity 
           style={styles.logoutButton}
-          onPress={() => navigation.navigate('Login')}
+          onPress={handleLogout}
+          activeOpacity={0.8}
         >
-          <Icon name="logout" size={24} color="#FFF" />
-          <Text style={styles.logoutButtonText}>Keluar</Text>
+          <Icon name="logout" size={24} color="#FFFFFF" />
+          <Text style={styles.logoutButtonText}>Keluar dari Aplikasi</Text>
         </TouchableOpacity>
       </ScrollView>
 
+      {/* Bottom Navigation */}
+      <View style={styles.bottomNav}>
+        {[
+          { icon: 'home', screen: 'Home', active: false },
+          { icon: 'receipt', screen: 'Order', active: false },
+          { icon: 'chat', screen: 'Chat', active: false },
+          { icon: 'person', screen: 'Profile', active: true }
+        ].map((nav, index) => (
+          <TouchableOpacity
+            key={index}
+            style={[styles.navItem, nav.active ? styles.activeNavItem : null]}
+            onPress={() => navigation.navigate(nav.screen)}
+            activeOpacity={0.7}
+          >
+            <Icon
+              name={nav.icon}
+              size={24}
+              style={[styles.navIcon, nav.active ? styles.activeNavIcon : null]}
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {renderEditProfileModal()}
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F7F9FC',
+    backgroundColor: '#F8F9FA',
+  },
+  headerBackground: {
+    backgroundColor: '#0391C4',
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
+    paddingTop: Platform.OS === 'ios' ? 60 : StatusBar.currentHeight + 20,
+    paddingBottom: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   header: {
-    backgroundColor: '#0391C4',
-    paddingTop: 40,
-    paddingBottom: 20,
-    alignItems: 'center',
-    borderBottomLeftRadius: 25,
-    borderBottomRightRadius: 25,
+    paddingHorizontal: 24,
   },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#FFF',
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 20,
   },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  profileSection: {
+  profileInfo: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 30,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 20,
+    padding: 16,
   },
   profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: '#0391C4',
-    marginBottom: 15,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  profileTextContainer: {
+    marginLeft: 16,
+    flex: 1,
   },
   profileName: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 5,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 4,
   },
   profileEmail: {
     fontSize: 14,
-    color: '#666',
+    color: '#FFFFFF',
+    opacity: 0.9,
   },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: '#FFF',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 20,
-    elevation: 3,
+  content: {
+    flex: 1,
+    marginTop: 20,
+  },
+  menuSection: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 24,
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333333',
+    marginBottom: 16,
+    paddingHorizontal: 4,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    backgroundColor: '#F7F9FC',
-    borderRadius: 10,
-    marginBottom: 10,
-    elevation: 2,
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  menuContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   menuIconContainer: {
     width: 40,
     height: 40,
-    backgroundColor: '#E6F2FF',
     borderRadius: 20,
+    backgroundColor: '#E6F2FF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 15,
+    marginRight: 16,
   },
   menuText: {
     fontSize: 16,
-    color: '#333',
+    color: '#333333',
     fontWeight: '500',
   },
   logoutButton: {
-    backgroundColor: '#0391C4',
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0391C4',
+    marginHorizontal: 24,
+    marginTop: 24,
+    marginBottom: 100,
     padding: 16,
-    borderRadius: 12,
-    marginVertical: 20,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   logoutButtonText: {
-    color: '#FFF',
+    color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
+  bottomNav: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: '#FFFFFF',
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E6E6E6',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  navItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+    borderRadius: 20,
+    minWidth: 60,
+  },
+  activeNavItem: {
+    backgroundColor: '#E6F2FF',
+  },
+  navIcon: {
+    color: '#999999',
+  },
+  activeNavIcon: {
+    color: '#0391C4',
   },
   modalOverlay: {
     flex: 1,
@@ -560,19 +599,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E0E0E0',
   },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F7F9FC',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    paddingHorizontal: 10,
-  },
-  passwordInput: {
-    flex: 1,
-    paddingVertical: 10,
-  },
   saveButton: {
     backgroundColor: '#0391C4',
     borderRadius: 12,
@@ -611,30 +637,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: '#ffffff',
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E6E6E6',
-    elevation: 10,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  navItem: {
-    padding: 10,
-  },
-  activeNavItem: {
-    backgroundColor: '#E6F2FF',
-    borderRadius: 20,
-  },
-  navIcon: {
-    color: '#999',
-  },
-  activeNavIcon: {
-    color: '#0391C4',
-  },
   errorText: {
     color: 'red',
     textAlign: 'center',
@@ -644,51 +646,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 16,
     color: '#666',
-  },
-  settingsSection: {
-    backgroundColor: '#FFF',
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 20,
-    elevation: 3,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  settingLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  settingText: {
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 15,
-  },
-  verifyButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E6F2FF',
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    marginTop: 10,
-  },
-  verifyText: {
-    color: '#0391C4',
-    marginLeft: 8,
-    fontSize: 14,
-    fontWeight: '500',
   },
 });
 

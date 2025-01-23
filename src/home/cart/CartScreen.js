@@ -16,11 +16,24 @@ import {
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CART_URL } from '../../../api';
 import Toast from 'react-native-toast-message';
 import Animated from 'react-native-reanimated';
+
+// Tambahkan object untuk mapping icon layanan
+const serviceIcons = {
+  'Cuci & Setrika': { type: 'material', name: 'local-laundry-service' },
+  'Setrika': { type: 'material', name: 'iron' },
+  'Alas Kasur': { type: 'material', name: 'bed' },
+  'Cuci Sepatu': { type: 'community', name: 'shoe-sneaker' }
+};
+
+// Update service pricing and timing constants
+const DELIVERY_FEE = 5000; // Biaya pengiriman Rp 5.000
+const PROCESSING_TIME = '2-3 hari kerja';
 
 const CartScreen = ({ route, navigation }) => {
   const [cartItems, setCartItems] = useState([]);
@@ -178,8 +191,13 @@ const CartScreen = ({ route, navigation }) => {
       });
 
       if (response.data.success) {
-        console.log('Cart data fetched:', response.data);
-        setCartItems(response.data.items || []);
+        console.log('Cart data received:', response.data.items);
+        // Pastikan setiap item memiliki _id yang valid
+        const validatedItems = response.data.items.map(item => ({
+          ...item,
+          _id: item._id?.toString() || item._id
+        }));
+        setCartItems(validatedItems);
       } else {
         console.log('Failed to fetch cart:', response.data);
         Toast.show({
@@ -190,7 +208,7 @@ const CartScreen = ({ route, navigation }) => {
         });
       }
     } catch (error) {
-      console.error('Error fetching cart:', error.response || error);
+      console.error('Error fetching cart:', error);
       if (error.response?.status === 401) {
         Toast.show({
           type: 'error',
@@ -237,7 +255,7 @@ const CartScreen = ({ route, navigation }) => {
 
   // Handle edit service
   const handleEditService = async (service) => {
-    if (!service || !service._id) {
+    if (!service) {
         Toast.show({
             type: 'error',
             text1: 'Error',
@@ -248,26 +266,53 @@ const CartScreen = ({ route, navigation }) => {
     }
 
     try {
+        // Pastikan serviceId dalam format string
+        const serviceId = service._id?.toString() || service._id;
+        
+        if (!serviceId) {
+            console.error('Invalid service ID:', service);
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'ID layanan tidak valid',
+                position: 'bottom'
+            });
+            return;
+        }
+
         const navigationData = {
             editMode: true,
             existingItems: service.items || [],
-            serviceId: service._id,
+            serviceId: serviceId,
             serviceName: service.service,
             totalPrice: service.totalPrice,
             isEdit: true
         };
 
-        console.log('Navigation data for edit:', navigationData);
+        console.log('Service to edit:', {
+            id: serviceId,
+            service: service.service,
+            items: service.items
+        });
 
         switch (service.service) {
             case 'Setrika':
-                navigation.navigate('Setrika', navigationData);
+                navigation.navigate('Setrika', {
+                    ...navigationData,
+                    service: service
+                });
                 break;
             case 'Cuci & Setrika':
-                navigation.navigate('CuciSetrika', navigationData);
+                navigation.navigate('CuciSetrika', {
+                    ...navigationData,
+                    service: service
+                });
                 break;
             case 'Alas Kasur':
-                navigation.navigate('AlasKasur', navigationData);
+                navigation.navigate('AlasKasur', {
+                    ...navigationData,
+                    service: service
+                });
                 break;
             case 'Cuci Sepatu':
                 navigation.navigate('CuciSepatu', {
@@ -588,8 +633,32 @@ const CartScreen = ({ route, navigation }) => {
           )}
         >
           <View style={styles.serviceTitleContainer}>
-            <View style={styles.serviceIconContainer}>
-              <Icon name="local-laundry-service" size={24} color="#0391C4" />
+            <View style={[
+              styles.serviceIconContainer,
+              { backgroundColor: service.service === 'Cuci & Setrika' ? '#E6F2FF' :
+                               service.service === 'Setrika' ? '#FFE6E6' :
+                               service.service === 'Alas Kasur' ? '#E6FFE6' :
+                               '#FFE6F2' }
+            ]}>
+              {serviceIcons[service.service].type === 'material' ? (
+                <Icon 
+                  name={serviceIcons[service.service].name}
+                  size={24} 
+                  color={service.service === 'Cuci & Setrika' ? '#0391C4' :
+                         service.service === 'Setrika' ? '#FF3B30' :
+                         service.service === 'Alas Kasur' ? '#34C759' :
+                         '#FF2D55'} 
+                />
+              ) : (
+                <MCIcon 
+                  name={serviceIcons[service.service].name}
+                  size={24} 
+                  color={service.service === 'Cuci & Setrika' ? '#0391C4' :
+                         service.service === 'Setrika' ? '#FF3B30' :
+                         service.service === 'Alas Kasur' ? '#34C759' :
+                         '#FF2D55'} 
+                />
+              )}
             </View>
             <View>
               <Text style={styles.serviceName}>{service.service}</Text>
@@ -598,7 +667,7 @@ const CartScreen = ({ route, navigation }) => {
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={styles.servicePriceContainer}>
             <Text style={styles.serviceTotal}>
               Rp {service.totalPrice.toLocaleString()}
             </Text>
@@ -615,29 +684,35 @@ const CartScreen = ({ route, navigation }) => {
             {service.items.map((item, index) => (
               <View key={index} style={styles.itemContainer}>
                 <View style={styles.itemInfo}>
-                  <Text>{item.name}</Text>
-                  <Text style={styles.itemPriceUnit}>
-                    {item.quantity} x Rp {item.price.toLocaleString()}
-                  </Text>
+                  <Text style={styles.itemName}>{item.name}</Text>
+                  <View style={styles.itemPriceContainer}>
+                    <Text style={styles.itemQuantity}>{item.quantity}x</Text>
+                    <Text style={styles.itemPrice}>
+                      Rp {item.price.toLocaleString()}
+                    </Text>
+                  </View>
                 </View>
+                <Text style={styles.itemTotal}>
+                  Rp {(item.quantity * item.price).toLocaleString()}
+                </Text>
               </View>
             ))}
             
             <View style={styles.serviceActions}>
               <TouchableOpacity 
-                style={styles.addItemButton}
+                style={styles.editButton}
                 onPress={() => handleEditService(service)}
               >
                 <Icon name="edit" size={20} color="#0391C4" />
-                <Text style={styles.addItemText}>Edit Layanan</Text>
+                <Text style={styles.editButtonText}>Edit Layanan</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
-                style={styles.removeServiceButton}
+                style={styles.deleteButton}
                 onPress={() => handleRemoveItem(service._id)}
               >
                 <Icon name="delete-outline" size={20} color="#FF3B30" />
-                <Text style={styles.removeServiceText}>Hapus</Text>
+                <Text style={styles.deleteButtonText}>Hapus</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -808,11 +883,13 @@ const styles = StyleSheet.create({
     marginTop: 12,
     borderRadius: 16,
     overflow: 'hidden',
-    elevation: 2,
+    elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 4
+    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: '#F0F0F0'
   },
   serviceHeader: {
     flexDirection: 'row',
@@ -820,11 +897,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
   },
+  serviceTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   serviceIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#E6F2FF',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12
@@ -832,18 +912,21 @@ const styles = StyleSheet.create({
   serviceName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333333'
+    color: '#333333',
+    marginBottom: 4
   },
   serviceItems: {
-    fontSize: 12,
-    color: '#666666',
-    marginTop: 2
+    fontSize: 13,
+    color: '#666666'
+  },
+  servicePriceContainer: {
+    alignItems: 'flex-end'
   },
   serviceTotal: {
     fontSize: 16,
     fontWeight: '600',
     color: '#0391C4',
-    marginRight: 8
+    marginBottom: 4
   },
   serviceDetails: {
     borderTopWidth: 1,
@@ -851,43 +934,102 @@ const styles = StyleSheet.create({
     padding: 16
   },
   itemContainer: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0'
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0'
   },
   itemInfo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8
   },
-  itemPriceUnit: {
-    fontSize: 12,
+  itemName: {
+    fontSize: 14,
+    color: '#333333'
+  },
+  itemPriceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  itemQuantity: {
+    fontSize: 14,
+    color: '#666666',
+    marginRight: 8
+  },
+  itemPrice: {
+    fontSize: 14,
     color: '#666666'
   },
-  quantityContainer: {
+  itemTotal: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0391C4',
+    textAlign: 'right'
+  },
+  serviceActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0'
+  },
+  editButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end'
-  },
-  quantityButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
     backgroundColor: '#E6F2FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: 8
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8
   },
-  quantityButtonDisabled: {
-    backgroundColor: '#F5F5F5'
+  editButtonText: {
+    color: '#0391C4',
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500'
+  },
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFE5E5',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8
+  },
+  deleteButtonText: {
+    color: '#FF3B30',
+    marginLeft: 8,
+    fontSize: 14,
+    fontWeight: '500'
   },
   bottomContainer: {
     backgroundColor: 'white',
     padding: 16,
     paddingBottom: Platform.OS === 'ios' ? 34 : 16,
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0'
+    borderTopColor: '#F0F0F0',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  totalSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  totalLabel: {
+    fontSize: 16,
+    color: '#333333'
+  },
+  totalPrice: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#0391C4'
   },
   checkoutButton: {
     flexDirection: 'row',
@@ -896,48 +1038,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#0391C4',
     paddingVertical: 14,
     borderRadius: 12,
-    marginTop: 12
+    elevation: 2,
+    shadowColor: '#0391C4',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  checkoutButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8
   },
   bottomSpacing: {
     height: 100
-  },
-  serviceTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  serviceActions: {
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-    marginTop: 12,
-    paddingTop: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  addItemButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E6F2FF',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8
-  },
-  addItemText: {
-    color: '#0391C4',
-    marginLeft: 8,
-    fontSize: 14,
-    fontWeight: '500'
-  },
-  removeServiceButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12
-  },
-  removeServiceText: {
-    color: '#FF3B30',
-    marginLeft: 8,
-    fontSize: 14
   },
   disabledService: {
     opacity: 0.5
@@ -958,7 +1072,17 @@ const styles = StyleSheet.create({
     color: '#FF3B30',
     marginLeft: 8,
     flex: 1
-  }
+  },
+  processingTime: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+  deliveryText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 8,
+  },
 });
 
 export default CartScreen;

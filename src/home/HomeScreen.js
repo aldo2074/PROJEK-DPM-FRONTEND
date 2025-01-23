@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import { CART_URL } from '../../api';
 import { 
   View, 
   Text, 
@@ -17,6 +20,33 @@ const { width } = Dimensions.get('window');
 
 const HomeScreen = () => {
   const navigation = useNavigation();
+  const [cartItemCount, setCartItemCount] = useState(0);
+
+  // Add this useEffect to fetch cart data
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchCartCount();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  // Add function to fetch cart count
+  const fetchCartCount = async () => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) return;
+
+      const response = await axios.get(CART_URL, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.data.success) {
+        setCartItemCount(response.data.items?.length || 0);
+      }
+    } catch (error) {
+      console.error('Error fetching cart count:', error);
+    }
+  };
 
   // Services data
   const services = [
@@ -80,6 +110,11 @@ const HomeScreen = () => {
                 onPress={() => navigation.navigate('Cart')}
               >
                 <Icon name="shopping-cart" size={28} color="#ffffff" />
+                {cartItemCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{cartItemCount}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
               <TouchableOpacity 
                 style={styles.notificationButton}
@@ -198,6 +233,7 @@ const styles = StyleSheet.create({
   cartButton: {
     padding: 10,
     marginRight: 5,
+    position: 'relative',
   },
   notificationButton: {
     padding: 10,
@@ -333,6 +369,25 @@ const styles = StyleSheet.create({
   },
   activeNavIcon: {
     color: '#0391C4',
+  },
+  badge: {
+    position: 'absolute',
+    right: 5,
+    top: 5,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
+  badgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    paddingHorizontal: 4,
   },
 });
 
