@@ -114,7 +114,6 @@ const CuciSetrikaScreen = ({ route, navigation }) => {
 
   const hasItems = Object.values(quantities).some(qty => qty > 0);
 
-  // Prevent accidental back navigation
   useEffect(() => {
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
@@ -153,7 +152,6 @@ const CuciSetrikaScreen = ({ route, navigation }) => {
 
   const handleSubmit = async () => {
     try {
-      // Validasi item yang dipilih
       const selectedItems = Object.entries(quantities)
         .filter(([_, quantity]) => quantity > 0)
         .map(([name, quantity]) => ({
@@ -320,7 +318,7 @@ const CuciSetrikaScreen = ({ route, navigation }) => {
                 
                 <TextInput 
                   style={styles.quantityInput}
-                  value={quantities[type.name].toString()}
+                  value={(quantities[type.name] || 0).toString()}
                   onChangeText={(text) => updateQuantity(type.name, text)}
                   keyboardType="numeric"
                 />

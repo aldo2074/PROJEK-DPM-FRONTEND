@@ -17,7 +17,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AUTH_URL } from '../../api';
+import { AUTH_URL, ADMIN_REGISTER_URL } from '../../api';
 import LaundryLogo from '../../assets/icons/laundry-logo.png';
 import BackgroundImage from '../../assets/background.jpg';
 import axios from 'axios';
@@ -32,68 +32,126 @@ const LoginScreen = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isAdminRegistration, setIsAdminRegistration] = useState(false);
+  const [adminCode, setAdminCode] = useState('');
 
   const handleLogin = async () => {
     if (!email || !password) {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Mohon isi semua field',
+        text2: 'Email dan password harus diisi',
         position: 'bottom'
       });
       return;
     }
 
-    setIsLoading(true);
     try {
-      // Cek apakah login sebagai admin
-      if (email === 'admin@admin.com' && password === 'admin123') {
-        await AsyncStorage.setItem('userToken', 'admin-token');
-        await AsyncStorage.setItem('userRole', 'admin');
-        
-        Toast.show({
-          type: 'success',
-          text1: 'Berhasil',
-          text2: 'Login admin berhasil',
-          position: 'bottom'
-        });
+      setIsLoading(true);
+      console.log('Attempting login with:', { email }); // Debug log
 
-        navigation.replace('Admin'); // Arahkan ke AdminScreen
-        return;
-      }
-
-      // Jika bukan admin, lakukan login user biasa
       const response = await axios.post(`${AUTH_URL}/login`, {
         email,
         password,
       });
 
+      console.log('Login response:', response.data); // Debug log
+
       if (response.data.success) {
-        await AsyncStorage.setItem('userToken', response.data.token);
-        await AsyncStorage.setItem('userRole', 'user');
+        const { token, user } = response.data.data;
         
-        axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
+        // Simpan token
+        await AsyncStorage.setItem('userToken', token);
+        await AsyncStorage.setItem('userData', JSON.stringify(user));
 
         Toast.show({
           type: 'success',
-          text1: 'Berhasil',
-          text2: 'Login berhasil',
-          position: 'bottom'
+          text1: 'Login Berhasil',
+          text2: user.role === 'admin' ? 'Selamat datang, Admin!' : 'Selamat datang!'
         });
 
-        navigation.replace('Home');
+        // Update navigasi untuk admin
+        if (user.role === 'admin') {
+          console.log('Navigating to Admin'); // Debug log
+          navigation.replace('Admin'); // Ubah dari 'AdminScreen' ke 'Admin'
+        } else {
+          console.log('Navigating to Home'); // Debug log
+          navigation.replace('Home');
+        }
       }
     } catch (error) {
-      let errorMessage = 'Gagal login. Silakan coba lagi.';
+      console.error('Login error:', error);
+      console.error('Error response:', error.response?.data);
+      
+      let errorMessage = 'Terjadi kesalahan';
       if (error.response?.data?.message) {
         errorMessage = error.response.data.message;
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Email atau password salah';
       }
 
       Toast.show({
         type: 'error',
         text1: 'Login Gagal',
-        text2: errorMessage,
+        text2: errorMessage
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAdminRegister = async () => {
+    if (!email || !password || !adminCode) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Semua field harus diisi',
         position: 'bottom'
+      });
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      
+      // Generate username dari email
+      const username = email.split('@')[0];
+
+      const response = await axios.post(ADMIN_REGISTER_URL, {
+        username,  // Tambahkan username
+        email,
+        password,
+        adminCode
+      });
+
+      console.log('Admin registration response:', response.data);
+
+      if (response.data.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Registrasi Berhasil',
+          text2: 'Akun admin berhasil dibuat'
+        });
+        setEmail('');
+        setPassword('');
+        setAdminCode('');
+        setIsAdminRegistration(false);
+      }
+    } catch (error) {
+      console.error('Admin registration error:', error);
+      
+      let errorMessage = 'Terjadi kesalahan pada server';
+      if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      }
+      if (error.response?.data?.details) {
+        errorMessage += `: ${error.response.data.details}`;
+      }
+      
+      Toast.show({
+        type: 'error',
+        text1: 'Registrasi Gagal',
+        text2: errorMessage
       });
     } finally {
       setIsLoading(false);
@@ -162,6 +220,21 @@ const LoginScreen = ({ navigation }) => {
                   />
                 </TouchableOpacity>
               </View>
+
+              {isAdminRegistration && (
+                <View style={styles.inputWrapper}>
+                  <Icon name="vpn-key" size={20} color="#0391C4" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.inputField}
+                    placeholder="Kode Admin"
+                    placeholderTextColor="#888"
+                    value={adminCode}
+                    onChangeText={setAdminCode}
+                    secureTextEntry
+                    editable={!isLoading}
+                  />
+                </View>
+              )}
             </View>
 
             <TouchableOpacity 
@@ -174,28 +247,53 @@ const LoginScreen = ({ navigation }) => {
 
             <TouchableOpacity 
               style={[styles.signInButton, isLoading && styles.disabledButton]} 
-              onPress={handleLogin}
+              onPress={isAdminRegistration ? handleAdminRegister : handleLogin}
               disabled={isLoading}
             >
               {isLoading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <View style={styles.signInContent}>
-                  <Icon name="login" size={20} color="#fff" />
-                  <Text style={styles.signInText}>Masuk</Text>
+                  <Icon name={isAdminRegistration ? "person-add" : "login"} size={20} color="#fff" />
+                  <Text style={styles.signInText}>
+                    {isAdminRegistration ? 'Daftar Admin' : 'Masuk'}
+                  </Text>
                 </View>
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.registerLink}
-              onPress={handleRegister}
-              disabled={isLoading}
-            >
-              <Text style={styles.registerText}>
-                Belum punya akun? <Text style={styles.registerLinkText}>Daftar</Text>
-              </Text>
-            </TouchableOpacity>
+            {/* Registration Options */}
+            <View style={styles.registrationContainer}>
+              <TouchableOpacity
+                style={[styles.registerButton, styles.userRegisterButton]}
+                onPress={handleRegister}
+                disabled={isLoading}
+              >
+                <Icon name="person-add" size={20} color="#0391C4" />
+                <Text style={[styles.registerButtonText, styles.userRegisterText]}>
+                  Daftar Pengguna
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.registerButton, styles.adminRegisterButton]}
+                onPress={() => setIsAdminRegistration(!isAdminRegistration)}
+                disabled={isLoading}
+              >
+                <Icon 
+                  name="admin-panel-settings" 
+                  size={20} 
+                  color={isAdminRegistration ? "#FF5252" : "#4CAF50"} 
+                />
+                <Text style={[
+                  styles.registerButtonText,
+                  { color: isAdminRegistration ? "#FF5252" : "#4CAF50" }
+                ]}>
+                  {isAdminRegistration ? 'Kembali ke Login' : 'Daftar Admin'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
           </View>
         </View>
       </ImageBackground>
@@ -313,15 +411,33 @@ const styles = StyleSheet.create({
   disabledButton: {
     backgroundColor: '#B3D5E6',
   },
-  registerLink: {
+  registrationContainer: {
+    width: '100%',
     marginTop: 20,
+    gap: 10,
   },
-  registerText: {
+  registerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+  },
+  userRegisterButton: {
+    borderColor: '#0391C4',
+  },
+  adminRegisterButton: {
+    borderColor: '#4CAF50',
+  },
+  registerButtonText: {
     fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
-  registerLinkText: {
+  userRegisterText: {
     color: '#0391C4',
-    fontWeight: 'bold',
   },
 });
 

@@ -17,6 +17,15 @@ import { useNavigation } from '@react-navigation/native';
 import { ORDER_URL, AUTH_URL, VALIDATE_TOKEN_URL } from '../../../api';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
+
+// Add service icons mapping at the top of the file after imports
+const serviceIcons = {
+  'Cuci & Setrika': { type: 'material', name: 'local-laundry-service' },
+  'Setrika': { type: 'material', name: 'iron' },
+  'Alas Kasur': { type: 'material', name: 'bed' },
+  'Cuci Sepatu': { type: 'community', name: 'shoe-sneaker' }
+};
 
 const OrderConfirmationScreen = ({ route }) => {
   const navigation = useNavigation();
@@ -155,32 +164,22 @@ const OrderConfirmationScreen = ({ route }) => {
         return;
       }
 
-      // Calculate estimated completion date (3 days from now)
       const estimatedDoneDate = new Date();
       estimatedDoneDate.setDate(estimatedDoneDate.getDate() + 3);
 
-      // Prepare order data
       const orderData = {
-        items: cartItems.map(service => ({
-          service: service.service,
-          items: service.items.map(item => ({
-            name: item.name,
-            quantity: item.quantity,
-            price: item.price
-          })),
-          totalPrice: service.totalPrice
-        })),
+        items: cartItems,
         totalAmount,
         deliveryFee,
         subtotal,
         deliveryMethod,
-        deliveryAddress: deliveryMethod === 'pickup' ? address : '',
+        deliveryAddress: address,
         paymentMethod: selectedPayment,
-        notes: note || '',
-        estimatedDoneDate
+        notes: note,
+        estimatedDoneDate,
+        status: 'pending'
       };
 
-      // Add logging for debugging
       console.log('Sending order data:', JSON.stringify(orderData, null, 2));
 
       const response = await axios.post(
@@ -283,7 +282,33 @@ const OrderConfirmationScreen = ({ route }) => {
   // Render service items
   const renderServiceItems = (service) => (
     <View key={service._id} style={styles.orderItem}>
-      <Icon name="local-laundry-service" size={24} color="#0391C4" />
+      <View style={[
+        styles.serviceIconContainer,
+        { backgroundColor: service.service === 'Cuci & Setrika' ? '#E6F2FF' :
+                          service.service === 'Setrika' ? '#FFE6E6' :
+                          service.service === 'Alas Kasur' ? '#E6FFE6' :
+                          '#FFE6F2' }
+      ]}>
+        {serviceIcons[service.service].type === 'material' ? (
+          <Icon 
+            name={serviceIcons[service.service].name}
+            size={24} 
+            color={service.service === 'Cuci & Setrika' ? '#0391C4' :
+                   service.service === 'Setrika' ? '#FF3B30' :
+                   service.service === 'Alas Kasur' ? '#34C759' :
+                   '#FF2D55'} 
+          />
+        ) : (
+          <MCIcon 
+            name={serviceIcons[service.service].name}
+            size={24} 
+            color={service.service === 'Cuci & Setrika' ? '#0391C4' :
+                   service.service === 'Setrika' ? '#FF3B30' :
+                   service.service === 'Alas Kasur' ? '#34C759' :
+                   '#FF2D55'} 
+          />
+        )}
+      </View>
       <View style={styles.orderItemContent}>
         <Text style={styles.orderItemTitle}>{service.service}</Text>
         <Text style={styles.orderItemSubtitle}>
@@ -776,6 +801,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666666',
     marginTop: 2,
+  },
+  serviceIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12
   },
 });
 

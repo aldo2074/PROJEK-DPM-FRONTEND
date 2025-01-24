@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
-import { CART_URL } from '../../api';
+import { CART_URL, NOTIFICATION_URL } from '../../api';
 import { 
   View, 
   Text, 
@@ -21,16 +21,16 @@ const { width } = Dimensions.get('window');
 const HomeScreen = () => {
   const navigation = useNavigation();
   const [cartItemCount, setCartItemCount] = useState(0);
+  const [notificationCount, setNotificationCount] = useState(0);
 
-  // Add this useEffect to fetch cart data
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       fetchCartCount();
+      fetchNotificationCount();
     });
     return unsubscribe;
   }, [navigation]);
 
-  // Add function to fetch cart count
   const fetchCartCount = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
@@ -48,7 +48,26 @@ const HomeScreen = () => {
     }
   };
 
-  // Services data
+  const fetchNotificationCount = async () => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) return;
+
+      const response = await axios.get(NOTIFICATION_URL, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (response.data.success) {
+        const unreadCount = response.data.notifications.filter(
+          notification => !notification.read
+        ).length;
+        setNotificationCount(unreadCount);
+      }
+    } catch (error) {
+      console.error('Error fetching notification count:', error);
+    }
+  };
+
   const services = [
     { 
       icon: require('../../assets/icons/cuci-setrika.png'), 
@@ -96,7 +115,6 @@ const HomeScreen = () => {
     <View style={styles.container}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       
-      {/* Header Section */}
       <View style={styles.headerBackground}>
         <View style={styles.header}>
           <View style={styles.headerContent}>
@@ -121,18 +139,21 @@ const HomeScreen = () => {
                 onPress={() => navigation.navigate('Notification')}
               >
                 <Icon name="notifications" size={28} color="#ffffff" />
+                {notificationCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{notificationCount}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </View>
 
-      {/* Main Content */}
       <ScrollView
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {/* Services Section */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Layanan Kami</Text>
           <View style={styles.servicesGrid}>
@@ -142,7 +163,6 @@ const HomeScreen = () => {
           </View>
         </View>
 
-        {/* About Us Section */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Tentang Kami</Text>
           <View style={styles.aboutUsCard}>
@@ -164,7 +184,6 @@ const HomeScreen = () => {
         </View>
       </ScrollView>
 
-      {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
         {[{ icon: 'home', screen: 'Home', active: true },
           { icon: 'receipt', screen: 'Order', active: false },

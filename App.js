@@ -16,7 +16,6 @@ import SetrikaScreen from './src/home/setrika/SetrikaScreen';
 import AlasKasurScreen from './src/home/alas-kasur/AlasKasurScreen';
 import CuciSepatuScreen from './src/home/cuci-sepatu/CuciSepatuScreen';
 import ChatScreen from './src/home/chat/ChatScreen';
-import RiwayatScreen from './src/home/profil/RiwayatScreen';
 import OrderScreen from './src/home/order/OrderScreen';
 import NotificationScreen from './src/home/notification/NotificationScreen';
 import OrderConfirmationScreen from './src/home/order/OrderConfirmationScreen';
@@ -29,6 +28,7 @@ import OrderDetailScreen from './src/home/order/OrderDetailScreen';
 import EditProfileScreen from './src/home/profil/EditProfileScreen';
 import ChangePasswordScreen from './src/home/profil/ChangePasswordScreen';
 import AboutAppScreen from './src/home/profil/AboutAppScreen';
+import SplashScreen from './src/screens/SplashScreen';
 
 const Stack = createStackNavigator();
 
@@ -37,7 +37,7 @@ export default function App() {
     <>
       <NavigationContainer>
         <Stack.Navigator
-          initialRouteName="Landing"
+          initialRouteName="Splash"
           screenOptions={{
             headerStyle: {
               backgroundColor: '#0391C4',
@@ -52,6 +52,16 @@ export default function App() {
             headerTitleAlign: 'center',
           }}
         >
+          {/* Splash Screen */}
+          <Stack.Screen
+            name="Splash"
+            component={SplashScreen}
+            options={{ 
+              headerShown: false,
+              gestureEnabled: false 
+            }}
+          />
+
           {/* Landing Screen */}
           <Stack.Screen
             name="Landing"
@@ -206,18 +216,6 @@ export default function App() {
             component={NotificationScreen}
             options={{
               title: 'Notifikasi',
-              headerTitleStyle: {
-                fontFamily: 'MavenPro-Bold',
-                fontSize: 18,
-              },
-            }}
-          />
-
-          <Stack.Screen
-            name="Riwayat"
-            component={RiwayatScreen}
-            options={{
-              title: 'Riwayat',
               headerTitleStyle: {
                 fontFamily: 'MavenPro-Bold',
                 fontSize: 18,

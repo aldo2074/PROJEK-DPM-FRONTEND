@@ -22,29 +22,23 @@ const OrderScreen = ({ route }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch orders when screen is focused
   useFocusEffect(
     React.useCallback(() => {
       fetchOrders();
     }, [])
   );
 
-  // Handle new order data from OrderConfirmationScreen
   useFocusEffect(
     React.useCallback(() => {
       if (route.params?.orderData) {
         const newOrder = {
           ...route.params.orderData,
-          _id: Date.now().toString(), // Generate temporary ID
+          _id: Date.now().toString(),
           orderNumber: generateOrderNumber(),
-          status: 'Dalam Proses',
+          status: 'Menunggu Konfirmasi',
           createdAt: new Date().toISOString()
         };
-        
-        // Add new order to the beginning of the list
         setOrders(prevOrders => [newOrder, ...prevOrders]);
-        
-        // Clear the route params
         navigation.setParams({ orderData: null });
       }
     }, [route.params?.orderData])
@@ -68,15 +62,10 @@ const OrderScreen = ({ route }) => {
       });
 
       if (response.data.success) {
-        // Log response data untuk debugging
-        console.log('API Response:', response.data.orders);
-        
-        // Tambahkan createdAt jika tidak ada
         const ordersWithDates = response.data.orders.map(order => ({
           ...order,
-          createdAt: order.createdAt || order.orderDate || new Date().toISOString() // fallback ke orderDate atau tanggal sekarang
+          createdAt: order.createdAt || order.orderDate || new Date().toISOString()
         }));
-        
         setOrders(ordersWithDates);
       }
     } catch (error) {
@@ -101,7 +90,6 @@ const OrderScreen = ({ route }) => {
     fetchOrders();
   }, []);
 
-  // Generate unique order number
   const generateOrderNumber = () => {
     const timestamp = Date.now().toString();
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
@@ -109,16 +97,11 @@ const OrderScreen = ({ route }) => {
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) {
-      return 'Tanggal tidak tersedia';
-    }
+    if (!dateString) return 'Tanggal tidak tersedia';
     
     try {
       const date = new Date(dateString);
-      
-      if (isNaN(date.getTime())) {
-        return 'Format tanggal tidak valid';
-      }
+      if (isNaN(date.getTime())) return 'Format tanggal tidak valid';
       
       return date.toLocaleDateString('id-ID', {
         weekday: 'long',
@@ -135,15 +118,17 @@ const OrderScreen = ({ route }) => {
   const getStatusColor = (status) => {
     switch (status) {
       case 'Dalam Proses':
-        return '#FF9800';
+        return '#FF9800';  // Orange
       case 'Menunggu Pickup':
-        return '#2196F3';
+        return '#2196F3';  // Blue
+      case 'Menunggu Konfirmasi':
+        return '#9C27B0';  // Purple  
       case 'Selesai':
-        return '#4CAF50';
+        return '#4CAF50';  // Green
       case 'Dibatalkan':
-        return '#F44336';
+        return '#F44336';  // Red
       default:
-        return '#999';
+        return '#999';     // Grey
     }
   };
 
@@ -152,14 +137,10 @@ const OrderScreen = ({ route }) => {
   };
 
   const OrderCard = ({ order }) => {
-    // Debug log untuk melihat data order
-    console.log('Order data:', order);
-    
     const totalItems = order.items.reduce((sum, service) => 
       sum + service.items.reduce((itemSum, item) => itemSum + item.quantity, 0), 0
     );
 
-    // Gunakan orderDate sebagai fallback jika createdAt tidak ada
     const displayDate = formatDate(order.createdAt || order.orderDate);
     const estimatedDoneDate = formatDate(order.estimatedDoneDate);
 
@@ -198,9 +179,7 @@ const OrderScreen = ({ route }) => {
           </View>
           <View style={styles.detailItem}>
             <Icon name="event" size={24} color="#0391C4" />
-            <Text style={styles.detailText}>
-              {estimatedDoneDate}
-            </Text>
+            <Text style={styles.detailText}>{estimatedDoneDate}</Text>
           </View>
         </View>
 
@@ -251,7 +230,6 @@ const OrderScreen = ({ route }) => {
         )}
       </ScrollView>
 
-      {/* Bottom Navigation - Updated to match HomeScreen */}
       <View style={styles.bottomNav}>
         {[
           { icon: 'home', screen: 'Home', active: false },
@@ -306,6 +284,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 16,
+    paddingBottom: 100,
   },
   orderCard: {
     backgroundColor: '#fff',
@@ -456,6 +435,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 100,
+    marginBottom: 100,
   },
   emptyText: {
     fontSize: 16,

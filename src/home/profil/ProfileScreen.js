@@ -16,7 +16,6 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useNavigation } from '@react-navigation/native';
-import * as ImagePicker from 'react-native-image-picker';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PROFILE_URL } from '../../../api';
@@ -44,7 +43,6 @@ const ProfileScreen = () => {
   const [profileData, setProfileData] = useState({
     username: '',
     email: '',
-    profileImage: null,
   });
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
@@ -99,7 +97,6 @@ const ProfileScreen = () => {
         setProfileData({
           username: response.data.user.username || '',
           email: response.data.user.email || '',
-          profileImage: response.data.user.profileImage || null,
         });
       }
     } catch (error) {
@@ -129,85 +126,24 @@ const ProfileScreen = () => {
         return;
       }
 
-      const formData = new FormData();
-      
-      // Only append if values exist and have changed
-      if (profileData.username) {
-        formData.append('username', profileData.username);
-      }
-      if (profileData.email) {
-        formData.append('email', profileData.email);
-      }
-      
-      // Handle image upload
-      if (profileData.profileImage?.uri) {
-        const imageFile = {
-          uri: profileData.profileImage.uri,
-          type: 'image/jpeg',
-          name: 'profile-image.jpg'
-        };
-        formData.append('profileImage', imageFile);
-      }
-
-      const response = await axios.put(PROFILE_URL, formData, {
+      const response = await axios.put(PROFILE_URL, {
+        username: profileData.username,
+        email: profileData.email
+      }, {
         headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
-        timeout: 10000
       });
 
       if (response.data.success) {
         Alert.alert('Sukses', 'Profil berhasil diperbarui');
-        // Update local state with new data
-        setProfileData(prev => ({
-          ...prev,
-          ...response.data.user,
-        }));
+        await fetchProfile();
         setEditModalVisible(false);
       }
     } catch (error) {
-      console.error('Error updating profile:', {
-        message: error.message,
-        response: error.response?.data
-      });
-
-      let errorMessage = 'Gagal memperbarui profil';
-      if (error.code === 'ECONNABORTED') {
-        errorMessage = 'Koneksi timeout. Silakan coba lagi.';
-      } else if (error.message === 'Network Error') {
-        errorMessage = 'Tidak dapat terhubung ke server. Periksa koneksi internet Anda.';
-      } else if (error.response?.status === 401) {
-        errorMessage = 'Sesi telah berakhir. Silakan login kembali.';
-        await AsyncStorage.removeItem('userToken');
-        navigation.replace('Login');
-      }
-
-      Alert.alert('Error', errorMessage);
-    }
-  };
-
-  const handleSelectImage = async () => {
-    // Meminta izin akses galeri
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  
-    if (!permissionResult.granted) {
-      Alert.alert('Izin Ditolak', 'Aplikasi memerlukan izin untuk mengakses galeri Anda.');
-      return;
-    }
-  
-    // Membuka galeri untuk memilih gambar
-    const pickerResult = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.5,
-    });
-  
-    if (!pickerResult.canceled) {
-      console.log('Gambar yang dipilih:', pickerResult.assets[0]);
-      setProfileData((prev) => ({
-        ...prev,
-        profileImage: pickerResult.assets[0],
-      }));
+      console.error('Error updating profile:', error);
+      Alert.alert('Error', 'Gagal memperbarui profil. Silakan coba lagi.');
     }
   };
 
@@ -240,23 +176,10 @@ const ProfileScreen = () => {
 
           <ScrollView>
             <View style={styles.formContainer}>
-              <View style={styles.profileImageEdit}>
-                <Image 
-                  source={
-                    profileData.profileImage
-                      ? { uri: `${PROFILE_URL}/${profileData.profileImage}` }
-                      : require('../../../assets/icons/default-profile.png')
-                  }
-                  style={styles.editProfileImage}
-                />
-                <TouchableOpacity 
-                  style={styles.changePhotoButton}
-                  onPress={handleSelectImage}
-                >
-                  <Icon name="camera-alt" size={20} color="#0391C4" />
-                  <Text style={styles.changePhotoText}>Ubah Foto</Text>
-                </TouchableOpacity>
+              <View style={styles.modalProfileIconContainer}>
+                <Icon name="person" size={60} color="#0391C4" />
               </View>
+              
               {['username', 'email'].map((field) => (
                 <View key={field} style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>
@@ -313,14 +236,9 @@ const ProfileScreen = () => {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Profil Saya</Text>
           <View style={styles.profileInfo}>
-            <Image 
-              source={
-                profileData.profileImage
-                  ? { uri: `${PROFILE_URL}/${profileData.profileImage}` }
-                  : require('../../../assets/icons/default-profile.png')
-              }
-              style={styles.profileImage}
-            />
+            <View style={styles.profileIconContainer}>
+              <Icon name="person" size={24} color="#0391C4" />
+            </View>
             <View style={styles.profileTextContainer}>
               <Text style={styles.profileName}>{profileData.username || 'Pengguna'}</Text>
               <Text style={styles.profileEmail}>{profileData.email || 'Email tidak tersedia'}</Text>
@@ -343,11 +261,6 @@ const ProfileScreen = () => {
             icon="lock-outline"
             text="Ubah Kata Sandi"
             onPress={() => navigation.navigate('ChangePassword')}
-          />
-          <MenuItem
-            icon="history"
-            text="Riwayat Pesanan"
-            onPress={() => navigation.navigate('Riwayat')}
           />
           <MenuItem
             icon="info-outline"
@@ -405,7 +318,7 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
     paddingTop: Platform.OS === 'ios' ? 60 : StatusBar.currentHeight + 20,
-    paddingBottom: 30,
+    paddingBottom: 50,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
@@ -426,24 +339,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 20,
-    padding: 16,
+    padding: 20,
+    marginTop: 10,
   },
-  profileImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
+  profileIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   profileTextContainer: {
     marginLeft: 16,
     flex: 1,
   },
   profileName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '600',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   profileEmail: {
     fontSize: 14,
@@ -452,13 +367,14 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    marginTop: 20,
+    marginTop: -20,
   },
   menuSection: {
     backgroundColor: '#FFFFFF',
     marginHorizontal: 24,
+    marginTop: 40,
     borderRadius: 20,
-    padding: 20,
+    padding: 24,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -469,7 +385,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     color: '#333333',
-    marginBottom: 16,
+    marginBottom: 20,
     paddingHorizontal: 4,
   },
   menuItem: {
@@ -477,18 +393,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 16,
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
   menuContent: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   menuIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#E6F2FF',
     justifyContent: 'center',
     alignItems: 'center',
@@ -498,6 +415,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333333',
     fontWeight: '500',
+    flex: 1,
   },
   logoutButton: {
     flexDirection: 'row',
@@ -505,8 +423,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#0391C4',
     marginHorizontal: 24,
-    marginTop: 24,
-    marginBottom: 100,
+    marginTop: 32,
+    marginBottom: 120,
     padding: 16,
     borderRadius: 16,
     shadowColor: '#000',
@@ -530,7 +448,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     backgroundColor: '#FFFFFF',
     paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 12,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
     borderTopWidth: 1,
     borderTopColor: '#E6E6E6',
     borderTopLeftRadius: 20,
@@ -611,32 +529,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  profileImageEdit: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  editProfileImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 3,
-    borderColor: '#0391C4',
-    marginBottom: 10,
-  },
-  changePhotoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E6F2FF',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-  },
-  changePhotoText: {
-    color: '#0391C4',
-    marginLeft: 8,
-    fontSize: 14,
-    fontWeight: '500',
-  },
   errorText: {
     color: 'red',
     textAlign: 'center',
@@ -646,6 +538,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 16,
     color: '#666',
+  },
+  modalProfileIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#E8E8E8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    alignSelf: 'center',
   },
 });
 
